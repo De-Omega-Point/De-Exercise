@@ -2,6 +2,7 @@ import type {
   EquipmentLibraryItem,
   EquipmentRecognition,
   ProgressionRecommendation,
+  ProgressionRule,
   SavedEquipment,
   TrainingSet,
   WorkoutSummary,
@@ -16,6 +17,7 @@ const tables = {
   workouts: "de_exercise_workouts",
   workoutExercises: "de_exercise_workout_exercises",
   sets: "de_exercise_sets",
+  progressionRules: "de_exercise_progression_rules",
   recommendations: "de_exercise_progression_recommendations",
   recognitionEvents: "de_exercise_recognition_events",
 } as const;
@@ -81,6 +83,24 @@ export async function saveRecognisedEquipment(
     });
 
   if (linkError) throw new Error(linkError.message);
+
+  const { error: ruleError } = await client()
+    .from(tables.progressionRules)
+    .upsert(
+      {
+        user_id: userId,
+        equipment_id: equipment.id,
+        exercise_id: exercise.id,
+        rep_low: 8,
+        rep_high: 12,
+        target_sets: 3,
+        increment_kg: 2.5,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,exercise_id,equipment_id" },
+    );
+
+  if (ruleError) throw new Error(ruleError.message);
 
   const { error: recognitionError } = await client()
     .from(tables.recognitionEvents)
@@ -237,6 +257,80 @@ export async function renameEquipment(userId: string, equipmentId: string, nickn
   if (error) throw new Error(error.message);
 }
 
+export async function getActiveWorkout(userId: string): Promise<WorkoutSummary | null> {
+  const { data, error } = await client()
+    .from(tables.workouts)
+    .select("id,started_at,completed_at")
+    .eq("user_id", userId)
+    .is("completed_at", null)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+
+  const summaries = await summariseWorkoutRows(userId, [data]);
+  return summaries[0] ?? {
+    id: data.id,
+    startedAt: data.started_at,
+    completedAt: data.completed_at,
+    exerciseCount: 0,
+    workingSets: 0,
+    volumeKg: 0,
+    topSet: null,
+  };
+}
+
+export async function startWorkout(userId: string): Promise<WorkoutSummary> {
+  const existing = await getActiveWorkout(userId);
+  if (existing) return existing;
+
+  const { data, error } = await client()
+    .from(tables.workouts)
+    .insert({ user_id: userId })
+    .select("id,started_at,completed_at")
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  return {
+    id: data.id,
+    startedAt: data.started_at,
+    completedAt: data.completed_at,
+    exerciseCount: 0,
+    workingSets: 0,
+    volumeKg: 0,
+    topSet: null,
+  };
+}
+
+export async function finishWorkout(userId: string, workoutId: string): Promise<WorkoutSummary> {
+  const completedAt = new Date().toISOString();
+
+  const { data, error } = await client()
+    .from(tables.workouts)
+    .update({ completed_at: completedAt })
+    .eq("user_id", userId)
+    .eq("id", workoutId)
+    .is("completed_at", null)
+    .select("id,started_at,completed_at")
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  const summaries = await summariseWorkoutRows(userId, [data]);
+  return summaries[0] ?? {
+    id: data.id,
+    startedAt: data.started_at,
+    completedAt: data.completed_at,
+    exerciseCount: 0,
+    workingSets: 0,
+    volumeKg: 0,
+    topSet: null,
+  };
+}
+
 export async function listRecentWorkouts(userId: string, limit = 12): Promise<WorkoutSummary[]> {
   const { data: workoutRows, error: workoutError } = await client()
     .from(tables.workouts)
@@ -248,117 +342,7 @@ export async function listRecentWorkouts(userId: string, limit = 12): Promise<Wo
   if (workoutError) throw new Error(workoutError.message);
   if (!workoutRows?.length) return [];
 
-  const workoutIds = workoutRows.map((row) => row.id);
-
-  const { data: workoutExerciseRows, error: workoutExerciseError } = await client()
-    .from(tables.workoutExercises)
-    .select("id,workout_id,exercise_id,equipment_id")
-    .eq("user_id", userId)
-    .in("workout_id", workoutIds)
-    .limit(1000);
-
-  if (workoutExerciseError) throw new Error(workoutExerciseError.message);
-
-  const exerciseIds = Array.from(new Set((workoutExerciseRows ?? []).map((row) => row.exercise_id)));
-  const equipmentIds = Array.from(
-    new Set((workoutExerciseRows ?? []).map((row) => row.equipment_id).filter(Boolean)),
-  ) as string[];
-
-  const [{ data: exerciseRows, error: exerciseError }, { data: equipmentRows, error: equipmentError }] =
-    await Promise.all([
-      exerciseIds.length
-        ? client().from(tables.exercises).select("id,name").eq("user_id", userId).in("id", exerciseIds)
-        : Promise.resolve({ data: [], error: null }),
-      equipmentIds.length
-        ? client().from(tables.equipment).select("id,nickname,equipment_type").eq("user_id", userId).in("id", equipmentIds)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-
-  if (exerciseError) throw new Error(exerciseError.message);
-  if (equipmentError) throw new Error(equipmentError.message);
-
-  const exerciseById = new Map((exerciseRows ?? []).map((row) => [row.id, row.name]));
-  const equipmentById = new Map(
-    (equipmentRows ?? []).map((row) => [row.id, row.nickname || row.equipment_type]),
-  );
-  const workoutExerciseById = new Map(
-    (workoutExerciseRows ?? []).map((row) => [row.id, row]),
-  );
-  const workoutExerciseIds = Array.from(workoutExerciseById.keys());
-
-  const { data: setRows, error: setError } = workoutExerciseIds.length
-    ? await client()
-        .from(tables.sets)
-        .select("workout_exercise_id,weight_kg,reps,rir,is_warmup")
-        .eq("user_id", userId)
-        .in("workout_exercise_id", workoutExerciseIds)
-        .limit(2000)
-    : { data: [], error: null };
-
-  if (setError) throw new Error(setError.message);
-
-  const setsByWorkout = new Map<string, typeof setRows>();
-  for (const set of setRows ?? []) {
-    if (set.is_warmup) continue;
-    const workoutExercise = workoutExerciseById.get(set.workout_exercise_id);
-    if (!workoutExercise) continue;
-    const list = setsByWorkout.get(workoutExercise.workout_id) ?? [];
-    list.push(set);
-    setsByWorkout.set(workoutExercise.workout_id, list);
-  }
-
-  const exerciseCountByWorkout = new Map<string, Set<string>>();
-  for (const row of workoutExerciseRows ?? []) {
-    const set = exerciseCountByWorkout.get(row.workout_id) ?? new Set<string>();
-    set.add(row.exercise_id);
-    exerciseCountByWorkout.set(row.workout_id, set);
-  }
-
-  return workoutRows.map((workout) => {
-    const sets = setsByWorkout.get(workout.id) ?? [];
-    let top:
-      | { equipmentLabel: string; exerciseName: string; weightKg: number; reps: number; score: number }
-      | null = null;
-
-    let volumeKg = 0;
-
-    for (const set of sets) {
-      const workoutExercise = workoutExerciseById.get(set.workout_exercise_id);
-      if (!workoutExercise) continue;
-      const weightKg = Number(set.weight_kg);
-      volumeKg += weightKg * set.reps;
-      const score = weightKg * (1 + set.reps / 30);
-
-      if (!top || score > top.score) {
-        top = {
-          equipmentLabel: workoutExercise.equipment_id
-            ? equipmentById.get(workoutExercise.equipment_id) ?? "Equipment"
-            : "Exercise",
-          exerciseName: exerciseById.get(workoutExercise.exercise_id) ?? "Exercise",
-          weightKg,
-          reps: set.reps,
-          score,
-        };
-      }
-    }
-
-    return {
-      id: workout.id,
-      startedAt: workout.started_at,
-      completedAt: workout.completed_at,
-      exerciseCount: exerciseCountByWorkout.get(workout.id)?.size ?? 0,
-      workingSets: sets.length,
-      volumeKg,
-      topSet: top
-        ? {
-            equipmentLabel: top.equipmentLabel,
-            exerciseName: top.exerciseName,
-            weightKg: top.weightKg,
-            reps: top.reps,
-          }
-        : null,
-    };
-  });
+  return summariseWorkoutRows(userId, workoutRows);
 }
 
 export async function loadRecentSets(
@@ -400,12 +384,78 @@ export async function loadRecentSets(
     .reverse();
 }
 
+export async function loadProgressionRule(
+  userId: string,
+  equipment: SavedEquipment,
+): Promise<ProgressionRule> {
+  const { data, error } = await client()
+    .from(tables.progressionRules)
+    .select("rep_low,rep_high,target_sets,increment_kg")
+    .eq("user_id", userId)
+    .eq("exercise_id", equipment.exerciseId)
+    .eq("equipment_id", equipment.id)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+
+  return data
+    ? {
+        repLow: data.rep_low,
+        repHigh: data.rep_high,
+        targetSets: data.target_sets,
+        incrementKg: Number(data.increment_kg),
+      }
+    : {
+        repLow: 8,
+        repHigh: 12,
+        targetSets: 3,
+        incrementKg: equipment.loadIncrementKg || 2.5,
+      };
+}
+
+export async function saveProgressionRule(
+  userId: string,
+  equipment: SavedEquipment,
+  rule: ProgressionRule,
+): Promise<ProgressionRule> {
+  const clean = normaliseProgressionRule(rule);
+
+  const { error } = await client()
+    .from(tables.progressionRules)
+    .upsert(
+      {
+        user_id: userId,
+        exercise_id: equipment.exerciseId,
+        equipment_id: equipment.id,
+        rep_low: clean.repLow,
+        rep_high: clean.repHigh,
+        target_sets: clean.targetSets,
+        increment_kg: clean.incrementKg,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,exercise_id,equipment_id" },
+    );
+
+  if (error) throw new Error(error.message);
+
+  const { error: equipmentError } = await client()
+    .from(tables.equipment)
+    .update({ load_increment_kg: clean.incrementKg })
+    .eq("user_id", userId)
+    .eq("id", equipment.id);
+
+  if (equipmentError) throw new Error(equipmentError.message);
+
+  return clean;
+}
+
 export async function logTrainingSet(
   userId: string,
+  workoutId: string,
   equipment: SavedEquipment,
   values: Omit<TrainingSet, "id" | "createdAt">,
 ) {
-  const workoutId = await ensureActiveWorkout(userId);
   const workoutExerciseId = await ensureWorkoutExercise(
     userId,
     workoutId,
@@ -484,32 +534,6 @@ export async function saveProgressionRecommendation(
   if (error) throw new Error(error.message);
 }
 
-async function ensureActiveWorkout(userId: string) {
-  const cutoff = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-
-  const { data: existing, error: existingError } = await client()
-    .from(tables.workouts)
-    .select("id")
-    .eq("user_id", userId)
-    .is("completed_at", null)
-    .gte("started_at", cutoff)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (existingError) throw new Error(existingError.message);
-  if (existing) return existing.id;
-
-  const { data, error } = await client()
-    .from(tables.workouts)
-    .insert({ user_id: userId })
-    .select("id")
-    .single();
-
-  if (error) throw new Error(error.message);
-  return data.id;
-}
-
 async function ensureWorkoutExercise(
   userId: string,
   workoutId: string,
@@ -551,6 +575,147 @@ async function ensureWorkoutExercise(
 
   if (error) throw new Error(error.message);
   return data.id;
+}
+
+async function summariseWorkoutRows(
+  userId: string,
+  workoutRows: Array<{ id: string; started_at: string; completed_at: string | null }>,
+): Promise<WorkoutSummary[]> {
+  if (!workoutRows.length) return [];
+
+  const workoutIds = workoutRows.map((row) => row.id);
+
+  const { data: workoutExerciseRows, error: workoutExerciseError } = await client()
+    .from(tables.workoutExercises)
+    .select("id,workout_id,exercise_id,equipment_id")
+    .eq("user_id", userId)
+    .in("workout_id", workoutIds)
+    .limit(1000);
+
+  if (workoutExerciseError) throw new Error(workoutExerciseError.message);
+
+  const exerciseIds = Array.from(new Set((workoutExerciseRows ?? []).map((row) => row.exercise_id)));
+  const equipmentIds = Array.from(
+    new Set((workoutExerciseRows ?? []).map((row) => row.equipment_id).filter(Boolean)),
+  ) as string[];
+
+  const exerciseResult = exerciseIds.length
+    ? await client()
+        .from(tables.exercises)
+        .select("id,name")
+        .eq("user_id", userId)
+        .in("id", exerciseIds)
+    : { data: [], error: null };
+
+  const equipmentResult = equipmentIds.length
+    ? await client()
+        .from(tables.equipment)
+        .select("id,nickname,equipment_type")
+        .eq("user_id", userId)
+        .in("id", equipmentIds)
+    : { data: [], error: null };
+
+  if (exerciseResult.error) throw new Error(exerciseResult.error.message);
+  if (equipmentResult.error) throw new Error(equipmentResult.error.message);
+
+  const exerciseById = new Map((exerciseResult.data ?? []).map((row) => [row.id, row.name]));
+  const equipmentById = new Map(
+    (equipmentResult.data ?? []).map((row) => [row.id, row.nickname || row.equipment_type]),
+  );
+  const workoutExerciseById = new Map(
+    (workoutExerciseRows ?? []).map((row) => [row.id, row]),
+  );
+  const workoutExerciseIds = Array.from(workoutExerciseById.keys());
+
+  const { data: setRows, error: setError } = workoutExerciseIds.length
+    ? await client()
+        .from(tables.sets)
+        .select("workout_exercise_id,weight_kg,reps,rir,is_warmup")
+        .eq("user_id", userId)
+        .in("workout_exercise_id", workoutExerciseIds)
+        .limit(2000)
+    : { data: [], error: null };
+
+  if (setError) throw new Error(setError.message);
+
+  const setsByWorkout = new Map<string, Array<{
+    workout_exercise_id: string;
+    weight_kg: number | string;
+    reps: number;
+    rir: number | null;
+    is_warmup: boolean;
+  }>>();
+
+  for (const set of setRows ?? []) {
+    if (set.is_warmup) continue;
+    const workoutExercise = workoutExerciseById.get(set.workout_exercise_id);
+    if (!workoutExercise) continue;
+    const list = setsByWorkout.get(workoutExercise.workout_id) ?? [];
+    list.push(set);
+    setsByWorkout.set(workoutExercise.workout_id, list);
+  }
+
+  const exerciseCountByWorkout = new Map<string, Set<string>>();
+  for (const row of workoutExerciseRows ?? []) {
+    const set = exerciseCountByWorkout.get(row.workout_id) ?? new Set<string>();
+    set.add(row.exercise_id);
+    exerciseCountByWorkout.set(row.workout_id, set);
+  }
+
+  return workoutRows.map((workout) => {
+    const sets = setsByWorkout.get(workout.id) ?? [];
+    let top:
+      | { equipmentLabel: string; exerciseName: string; weightKg: number; reps: number; score: number }
+      | null = null;
+
+    let volumeKg = 0;
+
+    for (const set of sets) {
+      const workoutExercise = workoutExerciseById.get(set.workout_exercise_id);
+      if (!workoutExercise) continue;
+      const weightKg = Number(set.weight_kg);
+      volumeKg += weightKg * set.reps;
+      const score = weightKg * (1 + set.reps / 30);
+
+      if (!top || score > top.score) {
+        top = {
+          equipmentLabel: workoutExercise.equipment_id
+            ? equipmentById.get(workoutExercise.equipment_id) ?? "Equipment"
+            : "Exercise",
+          exerciseName: exerciseById.get(workoutExercise.exercise_id) ?? "Exercise",
+          weightKg,
+          reps: set.reps,
+          score,
+        };
+      }
+    }
+
+    return {
+      id: workout.id,
+      startedAt: workout.started_at,
+      completedAt: workout.completed_at,
+      exerciseCount: exerciseCountByWorkout.get(workout.id)?.size ?? 0,
+      workingSets: sets.length,
+      volumeKg,
+      topSet: top
+        ? {
+            equipmentLabel: top.equipmentLabel,
+            exerciseName: top.exerciseName,
+            weightKg: top.weightKg,
+            reps: top.reps,
+          }
+        : null,
+    };
+  });
+}
+
+function normaliseProgressionRule(rule: ProgressionRule): ProgressionRule {
+  const repLow = Math.max(1, Math.min(50, Math.round(rule.repLow)));
+  const repHigh = Math.max(repLow, Math.min(100, Math.round(rule.repHigh)));
+  const targetSets = Math.max(1, Math.min(12, Math.round(rule.targetSets)));
+  const incrementKg = Math.max(0.25, Math.min(100, Math.round(rule.incrementKg * 4) / 4));
+
+  return { repLow, repHigh, targetSets, incrementKg };
 }
 
 function estimated1Rm(set: TrainingSet) {
