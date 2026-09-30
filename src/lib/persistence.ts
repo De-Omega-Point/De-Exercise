@@ -1,4 +1,11 @@
-import type { EquipmentRecognition, ProgressionRecommendation, SavedEquipment, TrainingSet } from "./types";
+import type {
+  EquipmentLibraryItem,
+  EquipmentRecognition,
+  ProgressionRecommendation,
+  SavedEquipment,
+  TrainingSet,
+  WorkoutSummary,
+} from "./types";
 import { supabase } from "./supabase";
 
 const tables = {
@@ -99,6 +106,259 @@ export async function saveRecognisedEquipment(
     exerciseName: exercise.name,
     loadIncrementKg: Number(equipment.load_increment_kg),
   };
+}
+
+export async function listEquipmentLibrary(userId: string): Promise<EquipmentLibraryItem[]> {
+  const { data: equipmentRows, error: equipmentError } = await client()
+    .from(tables.equipment)
+    .select("id,nickname,equipment_type,manufacturer,model,load_increment_kg,last_used_at,created_at")
+    .eq("user_id", userId)
+    .order("last_used_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
+
+  if (equipmentError) throw new Error(equipmentError.message);
+  if (!equipmentRows?.length) return [];
+
+  const equipmentIds = equipmentRows.map((row) => row.id);
+
+  const { data: linkRows, error: linkError } = await client()
+    .from(tables.equipmentExercises)
+    .select("equipment_id,exercise_id,is_primary")
+    .eq("user_id", userId)
+    .in("equipment_id", equipmentIds)
+    .order("is_primary", { ascending: false });
+
+  if (linkError) throw new Error(linkError.message);
+
+  const exerciseIds = Array.from(new Set((linkRows ?? []).map((row) => row.exercise_id)));
+
+  const { data: exerciseRows, error: exerciseError } = exerciseIds.length
+    ? await client()
+        .from(tables.exercises)
+        .select("id,name")
+        .eq("user_id", userId)
+        .in("id", exerciseIds)
+    : { data: [], error: null };
+
+  if (exerciseError) throw new Error(exerciseError.message);
+
+  const exerciseById = new Map((exerciseRows ?? []).map((row) => [row.id, row.name]));
+  const primaryExerciseByEquipment = new Map<string, { id: string; name: string }>();
+
+  for (const link of linkRows ?? []) {
+    if (primaryExerciseByEquipment.has(link.equipment_id)) continue;
+    primaryExerciseByEquipment.set(link.equipment_id, {
+      id: link.exercise_id,
+      name: exerciseById.get(link.exercise_id) ?? "Exercise",
+    });
+  }
+
+  const { data: workoutExerciseRows, error: workoutExerciseError } = await client()
+    .from(tables.workoutExercises)
+    .select("id,equipment_id")
+    .eq("user_id", userId)
+    .in("equipment_id", equipmentIds)
+    .limit(1000);
+
+  if (workoutExerciseError) throw new Error(workoutExerciseError.message);
+
+  const workoutExerciseIds = (workoutExerciseRows ?? []).map((row) => row.id);
+  const equipmentByWorkoutExercise = new Map(
+    (workoutExerciseRows ?? []).map((row) => [row.id, row.equipment_id as string]),
+  );
+
+  const { data: setRows, error: setError } = workoutExerciseIds.length
+    ? await client()
+        .from(tables.sets)
+        .select("id,workout_exercise_id,weight_kg,reps,rir,created_at")
+        .eq("user_id", userId)
+        .in("workout_exercise_id", workoutExerciseIds)
+        .eq("is_warmup", false)
+        .order("created_at", { ascending: false })
+        .limit(1000)
+    : { data: [], error: null };
+
+  if (setError) throw new Error(setError.message);
+
+  const setsByEquipment = new Map<string, TrainingSet[]>();
+
+  for (const row of setRows ?? []) {
+    const equipmentId = equipmentByWorkoutExercise.get(row.workout_exercise_id);
+    if (!equipmentId) continue;
+    const list = setsByEquipment.get(equipmentId) ?? [];
+    list.push({
+      id: row.id,
+      weightKg: Number(row.weight_kg),
+      reps: row.reps,
+      rir: row.rir ?? 0,
+      createdAt: row.created_at,
+    });
+    setsByEquipment.set(equipmentId, list);
+  }
+
+  return equipmentRows.map((row) => {
+    const exercise = primaryExerciseByEquipment.get(row.id) ?? {
+      id: "",
+      name: row.equipment_type,
+    };
+    const newestFirst = setsByEquipment.get(row.id) ?? [];
+    const chronological = [...newestFirst].reverse();
+    const estimated = chronological.map(estimated1Rm);
+    const bestWeightKg = chronological.reduce((max, set) => Math.max(max, set.weightKg), 0);
+
+    return {
+      id: row.id,
+      nickname: row.nickname,
+      equipmentType: row.equipment_type,
+      manufacturer: row.manufacturer,
+      model: row.model,
+      exerciseId: exercise.id,
+      exerciseName: exercise.name,
+      loadIncrementKg: Number(row.load_increment_kg),
+      lastUsedAt: row.last_used_at,
+      lastSet: newestFirst[0] ?? null,
+      bestWeightKg,
+      estimated1RmKg: estimated.length ? Math.max(...estimated) : 0,
+      totalWorkingSets: chronological.length,
+      trend1RmKg: estimated.slice(-12),
+    };
+  });
+}
+
+export async function renameEquipment(userId: string, equipmentId: string, nickname: string) {
+  const clean = nickname.trim();
+
+  const { error } = await client()
+    .from(tables.equipment)
+    .update({ nickname: clean || null })
+    .eq("user_id", userId)
+    .eq("id", equipmentId);
+
+  if (error) throw new Error(error.message);
+}
+
+export async function listRecentWorkouts(userId: string, limit = 12): Promise<WorkoutSummary[]> {
+  const { data: workoutRows, error: workoutError } = await client()
+    .from(tables.workouts)
+    .select("id,started_at,completed_at")
+    .eq("user_id", userId)
+    .order("started_at", { ascending: false })
+    .limit(limit);
+
+  if (workoutError) throw new Error(workoutError.message);
+  if (!workoutRows?.length) return [];
+
+  const workoutIds = workoutRows.map((row) => row.id);
+
+  const { data: workoutExerciseRows, error: workoutExerciseError } = await client()
+    .from(tables.workoutExercises)
+    .select("id,workout_id,exercise_id,equipment_id")
+    .eq("user_id", userId)
+    .in("workout_id", workoutIds)
+    .limit(1000);
+
+  if (workoutExerciseError) throw new Error(workoutExerciseError.message);
+
+  const exerciseIds = Array.from(new Set((workoutExerciseRows ?? []).map((row) => row.exercise_id)));
+  const equipmentIds = Array.from(
+    new Set((workoutExerciseRows ?? []).map((row) => row.equipment_id).filter(Boolean)),
+  ) as string[];
+
+  const [{ data: exerciseRows, error: exerciseError }, { data: equipmentRows, error: equipmentError }] =
+    await Promise.all([
+      exerciseIds.length
+        ? client().from(tables.exercises).select("id,name").eq("user_id", userId).in("id", exerciseIds)
+        : Promise.resolve({ data: [], error: null }),
+      equipmentIds.length
+        ? client().from(tables.equipment).select("id,nickname,equipment_type").eq("user_id", userId).in("id", equipmentIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+  if (exerciseError) throw new Error(exerciseError.message);
+  if (equipmentError) throw new Error(equipmentError.message);
+
+  const exerciseById = new Map((exerciseRows ?? []).map((row) => [row.id, row.name]));
+  const equipmentById = new Map(
+    (equipmentRows ?? []).map((row) => [row.id, row.nickname || row.equipment_type]),
+  );
+  const workoutExerciseById = new Map(
+    (workoutExerciseRows ?? []).map((row) => [row.id, row]),
+  );
+  const workoutExerciseIds = Array.from(workoutExerciseById.keys());
+
+  const { data: setRows, error: setError } = workoutExerciseIds.length
+    ? await client()
+        .from(tables.sets)
+        .select("workout_exercise_id,weight_kg,reps,rir,is_warmup")
+        .eq("user_id", userId)
+        .in("workout_exercise_id", workoutExerciseIds)
+        .limit(2000)
+    : { data: [], error: null };
+
+  if (setError) throw new Error(setError.message);
+
+  const setsByWorkout = new Map<string, typeof setRows>();
+  for (const set of setRows ?? []) {
+    if (set.is_warmup) continue;
+    const workoutExercise = workoutExerciseById.get(set.workout_exercise_id);
+    if (!workoutExercise) continue;
+    const list = setsByWorkout.get(workoutExercise.workout_id) ?? [];
+    list.push(set);
+    setsByWorkout.set(workoutExercise.workout_id, list);
+  }
+
+  const exerciseCountByWorkout = new Map<string, Set<string>>();
+  for (const row of workoutExerciseRows ?? []) {
+    const set = exerciseCountByWorkout.get(row.workout_id) ?? new Set<string>();
+    set.add(row.exercise_id);
+    exerciseCountByWorkout.set(row.workout_id, set);
+  }
+
+  return workoutRows.map((workout) => {
+    const sets = setsByWorkout.get(workout.id) ?? [];
+    let top:
+      | { equipmentLabel: string; exerciseName: string; weightKg: number; reps: number; score: number }
+      | null = null;
+
+    let volumeKg = 0;
+
+    for (const set of sets) {
+      const workoutExercise = workoutExerciseById.get(set.workout_exercise_id);
+      if (!workoutExercise) continue;
+      const weightKg = Number(set.weight_kg);
+      volumeKg += weightKg * set.reps;
+      const score = weightKg * (1 + set.reps / 30);
+
+      if (!top || score > top.score) {
+        top = {
+          equipmentLabel: workoutExercise.equipment_id
+            ? equipmentById.get(workoutExercise.equipment_id) ?? "Equipment"
+            : "Exercise",
+          exerciseName: exerciseById.get(workoutExercise.exercise_id) ?? "Exercise",
+          weightKg,
+          reps: set.reps,
+          score,
+        };
+      }
+    }
+
+    return {
+      id: workout.id,
+      startedAt: workout.started_at,
+      completedAt: workout.completed_at,
+      exerciseCount: exerciseCountByWorkout.get(workout.id)?.size ?? 0,
+      workingSets: sets.length,
+      volumeKg,
+      topSet: top
+        ? {
+            equipmentLabel: top.equipmentLabel,
+            exerciseName: top.exerciseName,
+            weightKg: top.weightKg,
+            reps: top.reps,
+          }
+        : null,
+    };
+  });
 }
 
 export async function loadRecentSets(
@@ -291,4 +551,8 @@ async function ensureWorkoutExercise(
 
   if (error) throw new Error(error.message);
   return data.id;
+}
+
+function estimated1Rm(set: TrainingSet) {
+  return set.weightKg * (1 + set.reps / 30);
 }
