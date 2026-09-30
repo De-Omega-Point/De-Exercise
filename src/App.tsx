@@ -4,6 +4,8 @@ import { EditableSetList } from "./components/EditableSetList";
 import { HistoryView } from "./components/HistoryView";
 import { LibraryView } from "./components/LibraryView";
 import { ProgressionRuleEditor } from "./components/ProgressionRuleEditor";
+import { RoutineSessionQueue } from "./components/RoutineSessionQueue";
+import { RoutinesView } from "./components/RoutinesView";
 import { WorkoutSessionBar } from "./components/WorkoutSessionBar";
 import { WorkoutSummaryCard } from "./components/WorkoutSummaryCard";
 import { recogniseEquipment } from "./lib/equipment-recognition";
@@ -27,11 +29,21 @@ import {
   uploadEquipmentPhoto,
 } from "./lib/persistence";
 import { getProgressionRecommendation } from "./lib/progression";
+import {
+  createRoutine,
+  deleteRoutine,
+  getActiveRoutineId,
+  getRoutineProgress,
+  listRoutines,
+  startRoutineWorkout,
+} from "./lib/routines";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type {
   EquipmentLibraryItem,
   EquipmentRecognition,
   ProgressionRule,
+  Routine,
+  RoutineProgress,
   SavedEquipment,
   TrainingSet,
   WorkoutSummary,
@@ -50,7 +62,7 @@ const defaultRule: ProgressionRule = {
   incrementKg: 2.5,
 };
 
-type AppView = "train" | "library" | "history";
+type AppView = "train" | "library" | "routines" | "history";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -73,6 +85,9 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState("");
   const [sets, setSets] = useState<TrainingSet[]>(isSupabaseConfigured ? [] : seedSets);
   const [library, setLibrary] = useState<EquipmentLibraryItem[]>([]);
+  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [activeRoutine, setActiveRoutine] = useState<Routine | null>(null);
+  const [routineProgress, setRoutineProgress] = useState<RoutineProgress>({});
   const [workouts, setWorkouts] = useState<WorkoutSummary[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [weight, setWeight] = useState(40);
@@ -99,6 +114,9 @@ export default function App() {
         setPendingPhoto(null);
         setSets([]);
         setLibrary([]);
+        setRoutines([]);
+        setActiveRoutine(null);
+        setRoutineProgress({});
         setWorkouts([]);
         setView("train");
       }
@@ -117,11 +135,26 @@ export default function App() {
       listEquipmentLibrary(userId),
       listRecentWorkouts(userId),
       getActiveWorkout(userId),
+      listRoutines(userId),
+      getActiveRoutineId(userId),
     ])
-      .then(([, equipment, recentWorkouts, currentWorkout]) => {
+      .then(async ([, equipment, recentWorkouts, currentWorkout, savedRoutines, activeRoutineId]) => {
         setLibrary(equipment);
         setWorkouts(recentWorkouts);
         setActiveWorkout(currentWorkout);
+        setRoutines(savedRoutines);
+
+        const resumedRoutine = activeRoutineId
+          ? savedRoutines.find((routine) => routine.id === activeRoutineId) ?? null
+          : null;
+
+        setActiveRoutine(resumedRoutine);
+
+        if (currentWorkout && resumedRoutine) {
+          setRoutineProgress(await getRoutineProgress(userId, currentWorkout.id, resumedRoutine));
+        } else {
+          setRoutineProgress({});
+        }
       })
       .catch((error) => {
         setStatusMessage(error instanceof Error ? error.message : "Could not load training memory.");
@@ -161,14 +194,29 @@ export default function App() {
     if (!userId) return;
     setMemoryLoading(true);
     try {
-      const [equipment, recentWorkouts, currentWorkout] = await Promise.all([
+      const [equipment, recentWorkouts, currentWorkout, savedRoutines, activeRoutineId] = await Promise.all([
         listEquipmentLibrary(userId),
         listRecentWorkouts(userId),
         getActiveWorkout(userId),
+        listRoutines(userId),
+        getActiveRoutineId(userId),
       ]);
       setLibrary(equipment);
       setWorkouts(recentWorkouts);
       setActiveWorkout(currentWorkout);
+      setRoutines(savedRoutines);
+
+      const resumedRoutine = activeRoutineId
+        ? savedRoutines.find((routine) => routine.id === activeRoutineId) ?? null
+        : null;
+
+      setActiveRoutine(resumedRoutine);
+
+      if (currentWorkout && resumedRoutine) {
+        setRoutineProgress(await getRoutineProgress(userId, currentWorkout.id, resumedRoutine));
+      } else {
+        setRoutineProgress({});
+      }
     } finally {
       setMemoryLoading(false);
     }
@@ -304,6 +352,8 @@ export default function App() {
   async function handleStartWorkout() {
     setSessionBusy(true);
     setCompletedWorkout(null);
+    setActiveRoutine(null);
+    setRoutineProgress({});
     setStatusMessage("");
 
     try {
@@ -359,6 +409,8 @@ export default function App() {
         };
         setCompletedWorkout(finished);
         setActiveWorkout(null);
+        setActiveRoutine(null);
+        setRoutineProgress({});
         setStatusMessage("Demo workout finished.");
         return;
       }
@@ -366,6 +418,8 @@ export default function App() {
       const finished = await finishWorkout(userId, activeWorkout.id);
       setCompletedWorkout(finished);
       setActiveWorkout(null);
+      setActiveRoutine(null);
+      setRoutineProgress({});
       await refreshMemory();
       setStatusMessage("Workout finished and locked into History.");
     } catch (error) {
@@ -577,6 +631,81 @@ export default function App() {
     });
   }
 
+  async function handleCreateRoutine(name: string, equipment: EquipmentLibraryItem[]) {
+    if (!userId) {
+      setStatusMessage("Connect Supabase before saving routines.");
+      return;
+    }
+
+    setStatusMessage("");
+
+    try {
+      await createRoutine(userId, name, equipment);
+      await refreshMemory();
+      setStatusMessage("Routine saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not save routine.");
+    }
+  }
+
+  async function handleDeleteRoutine(routine: Routine) {
+    if (!userId) return;
+
+    setStatusMessage("");
+
+    try {
+      await deleteRoutine(userId, routine.id);
+      await refreshMemory();
+      setStatusMessage(`${routine.name} deleted.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not delete routine.");
+    }
+  }
+
+  async function handleStartRoutine(routine: Routine) {
+    if (!userId) {
+      setStatusMessage("Connect Supabase before starting saved routines.");
+      return;
+    }
+
+    setSessionBusy(true);
+    setCompletedWorkout(null);
+    setStatusMessage("");
+
+    try {
+      const workout = await startRoutineWorkout(userId, routine.id);
+      const progress = await getRoutineProgress(userId, workout.id, routine);
+
+      setActiveWorkout(workout);
+      setActiveRoutine(routine);
+      setRoutineProgress(progress);
+      setView("train");
+
+      const firstIncomplete = routine.items.find(
+        (item) => (progress[item.equipment.id] ?? 0) < item.targetSets,
+      ) ?? routine.items[0];
+
+      if (firstIncomplete) {
+        await chooseSavedMachine(firstIncomplete.equipment);
+      }
+
+      setStatusMessage(`${routine.name} started. Session queue is live.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not start routine.");
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
+  async function handleRoutineMachineSelect(equipmentId: string) {
+    if (!activeRoutine) return;
+
+    const item = activeRoutine.items.find((entry) => entry.equipment.id === equipmentId);
+    if (!item) return;
+
+    await chooseSavedMachine(item.equipment);
+  }
+
   async function signOut() {
     if (!supabase) return;
     await supabase.auth.signOut();
@@ -586,10 +715,10 @@ export default function App() {
     <main className="shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">DE-EXERCISE / PHASE 5</p>
-          <h1>Correct the log. Remember the machine. Keep the useful context.</h1>
+          <p className="eyebrow">DE-EXERCISE / PHASE 6</p>
+          <h1>Plan the session. Follow the queue. Progress every machine.</h1>
           <p className="subtle">
-            Today’s sets are reversible, workout notes persist, and scanned equipment photos become private machine memory.
+            Saved routines turn your machine library into an ordered workout with live exercise completion and one-tap navigation.
           </p>
         </div>
         <div className="hero-actions">
@@ -605,6 +734,9 @@ export default function App() {
         <button type="button" className={view === "library" ? "active" : ""} onClick={() => setView("library")}>
           Library <span>{library.length}</span>
         </button>
+        <button type="button" className={view === "routines" ? "active" : ""} onClick={() => setView("routines")}>
+          Routines <span>{routines.length}</span>
+        </button>
         <button type="button" className={view === "history" ? "active" : ""} onClick={() => setView("history")}>History</button>
       </nav>
 
@@ -616,6 +748,17 @@ export default function App() {
           loading={memoryLoading}
           onTrain={chooseSavedMachine}
           onRename={handleRename}
+        />
+      )}
+
+      {view === "routines" && (
+        <RoutinesView
+          routines={routines}
+          equipment={library}
+          loading={memoryLoading}
+          onCreate={handleCreateRoutine}
+          onStart={handleStartRoutine}
+          onDelete={handleDeleteRoutine}
         />
       )}
 
@@ -638,6 +781,15 @@ export default function App() {
             <WorkoutSummaryCard
               workout={completedWorkout}
               onDismiss={() => setCompletedWorkout(null)}
+            />
+          )}
+
+          {activeWorkout && activeRoutine && (
+            <RoutineSessionQueue
+              routine={activeRoutine}
+              progress={routineProgress}
+              activeEquipmentId={activeEquipment?.id ?? null}
+              onSelect={handleRoutineMachineSelect}
             />
           )}
 
