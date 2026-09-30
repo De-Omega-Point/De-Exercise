@@ -34,7 +34,7 @@ export function LibraryView({ items, loading, onTrain, onRename }: LibraryViewPr
         <div>
           <p className="eyebrow">MACHINE MEMORY</p>
           <h2>Your equipment library</h2>
-          <p className="subtle">Each saved machine keeps its own training history and progression context.</p>
+          <p className="subtle">Each saved machine keeps its own photo, training history and progression context.</p>
         </div>
         <div className="memory-kpis">
           <Kpi label="Machines" value={String(items.length)} />
@@ -48,7 +48,7 @@ export function LibraryView({ items, loading, onTrain, onRename }: LibraryViewPr
       {!loading && items.length === 0 && (
         <article className="card empty-card">
           <strong>No saved machines yet.</strong>
-          <p className="subtle">Scan and confirm your first piece of equipment, then it will live here with its own numbers.</p>
+          <p className="subtle">Scan and confirm your first piece of equipment, then it will live here with its own photo and numbers.</p>
         </article>
       )}
 
@@ -57,6 +57,16 @@ export function LibraryView({ items, loading, onTrain, onRename }: LibraryViewPr
           const label = item.nickname || item.equipmentType;
           return (
             <article className="card machine-card" key={item.id}>
+              <div className="machine-photo">
+                {item.photoUrl ? (
+                  <img src={item.photoUrl} alt={`${label} gym equipment`} />
+                ) : (
+                  <div className="machine-photo-placeholder" aria-label="No equipment photo saved">
+                    <span>PHOTO</span>
+                  </div>
+                )}
+              </div>
+
               <div className="machine-card-top">
                 <div>
                   <p className="eyebrow">{item.exerciseName}</p>
