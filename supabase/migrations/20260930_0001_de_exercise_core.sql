@@ -32,8 +32,7 @@ create table if not exists public.de_exercise_equipment (
   last_used_at timestamptz,
   unique (id, user_id),
   foreign key (gym_id, user_id)
-    references public.de_exercise_gyms(id, user_id)
-    on delete set null
+    references public.de_exercise_gyms(id, user_id)\n    on delete set null (gym_id)
 );
 
 create table if not exists public.de_exercise_equipment_images (
@@ -81,8 +80,7 @@ create table if not exists public.de_exercise_workouts (
   notes text,
   unique (id, user_id),
   foreign key (gym_id, user_id)
-    references public.de_exercise_gyms(id, user_id)
-    on delete set null
+    references public.de_exercise_gyms(id, user_id)\n    on delete set null (gym_id)
 );
 
 create table if not exists public.de_exercise_workout_exercises (
@@ -100,8 +98,7 @@ create table if not exists public.de_exercise_workout_exercises (
     references public.de_exercise_exercises(id, user_id)
     on delete restrict,
   foreign key (equipment_id, user_id)
-    references public.de_exercise_equipment(id, user_id)
-    on delete set null
+    references public.de_exercise_equipment(id, user_id)\n    on delete set null (equipment_id)
 );
 
 create table if not exists public.de_exercise_sets (
@@ -157,8 +154,7 @@ create table if not exists public.de_exercise_progression_recommendations (
     references public.de_exercise_equipment(id, user_id)
     on delete cascade,
   foreign key (based_on_workout_id, user_id)
-    references public.de_exercise_workouts(id, user_id)
-    on delete set null
+    references public.de_exercise_workouts(id, user_id)\n    on delete set null (based_on_workout_id)
 );
 
 create table if not exists public.de_exercise_recognition_events (
@@ -174,8 +170,7 @@ create table if not exists public.de_exercise_recognition_events (
   user_confirmed boolean not null default false,
   created_at timestamptz not null default now(),
   foreign key (equipment_id, user_id)
-    references public.de_exercise_equipment(id, user_id)
-    on delete set null
+    references public.de_exercise_equipment(id, user_id)\n    on delete set null (equipment_id)
 );
 
 create index if not exists dex_gyms_user_idx
