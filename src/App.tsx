@@ -1,16 +1,27 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { HistoryView } from "./components/HistoryView";
+import { LibraryView } from "./components/LibraryView";
 import { recogniseEquipment } from "./lib/equipment-recognition";
 import {
   ensureExerciseProfile,
+  listEquipmentLibrary,
+  listRecentWorkouts,
   loadRecentSets,
   logTrainingSet,
+  renameEquipment,
   saveProgressionRecommendation,
   saveRecognisedEquipment,
 } from "./lib/persistence";
 import { getProgressionRecommendation } from "./lib/progression";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import type { EquipmentRecognition, SavedEquipment, TrainingSet } from "./lib/types";
+import type {
+  EquipmentLibraryItem,
+  EquipmentRecognition,
+  SavedEquipment,
+  TrainingSet,
+  WorkoutSummary,
+} from "./lib/types";
 
 const seedSets: TrainingSet[] = [
   { id: "1", weightKg: 40, reps: 10, rir: 2 },
@@ -18,9 +29,12 @@ const seedSets: TrainingSet[] = [
   { id: "3", weightKg: 40, reps: 9, rir: 1 },
 ];
 
+type AppView = "train" | "library" | "history";
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
+  const [view, setView] = useState<AppView>("train");
   const [recognition, setRecognition] = useState<EquipmentRecognition | null>(null);
   const [activeEquipment, setActiveEquipment] = useState<SavedEquipment | null>(null);
   const [manualCorrection, setManualCorrection] = useState("");
@@ -29,6 +43,9 @@ export default function App() {
   const [recognitionError, setRecognitionError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [sets, setSets] = useState<TrainingSet[]>(isSupabaseConfigured ? [] : seedSets);
+  const [library, setLibrary] = useState<EquipmentLibraryItem[]>([]);
+  const [workouts, setWorkouts] = useState<WorkoutSummary[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
   const [weight, setWeight] = useState(40);
   const [reps, setReps] = useState(10);
   const [rir, setRir] = useState(2);
@@ -49,6 +66,9 @@ export default function App() {
         setActiveEquipment(null);
         setRecognition(null);
         setSets([]);
+        setLibrary([]);
+        setWorkouts([]);
+        setView("train");
       }
     });
 
@@ -59,9 +79,20 @@ export default function App() {
     const userId = session?.user.id;
     if (!userId) return;
 
-    ensureExerciseProfile(userId).catch((error) => {
-      setStatusMessage(error instanceof Error ? error.message : "Could not initialise profile.");
-    });
+    setMemoryLoading(true);
+    Promise.all([
+      ensureExerciseProfile(userId),
+      listEquipmentLibrary(userId),
+      listRecentWorkouts(userId),
+    ])
+      .then(([, equipment, recentWorkouts]) => {
+        setLibrary(equipment);
+        setWorkouts(recentWorkouts);
+      })
+      .catch((error) => {
+        setStatusMessage(error instanceof Error ? error.message : "Could not load training memory.");
+      })
+      .finally(() => setMemoryLoading(false));
   }, [session?.user.id]);
 
   const recommendation = useMemo(
@@ -91,6 +122,21 @@ export default function App() {
 
   const userId = session?.user.id ?? null;
   const isLive = Boolean(userId && supabase);
+
+  async function refreshMemory() {
+    if (!userId) return;
+    setMemoryLoading(true);
+    try {
+      const [equipment, recentWorkouts] = await Promise.all([
+        listEquipmentLibrary(userId),
+        listRecentWorkouts(userId),
+      ]);
+      setLibrary(equipment);
+      setWorkouts(recentWorkouts);
+    } finally {
+      setMemoryLoading(false);
+    }
+  }
 
   async function handleImage(file?: File) {
     if (!file) return;
@@ -146,7 +192,8 @@ export default function App() {
       if (recentSets.length) {
         setWeight(recentSets[recentSets.length - 1].weightKg);
       }
-      setStatusMessage("Machine saved. Exact-machine history is now active.");
+      await refreshMemory();
+      setStatusMessage("Machine saved. It now has its own persistent training memory.");
     } catch (error) {
       setRecognitionError(error instanceof Error ? error.message : "Could not save equipment.");
     } finally {
@@ -154,11 +201,47 @@ export default function App() {
     }
   }
 
+  async function chooseSavedMachine(item: EquipmentLibraryItem) {
+    if (!userId) return;
+    setStatusMessage("");
+    try {
+      const recentSets = await loadRecentSets(userId, item.id);
+      setActiveEquipment(item);
+      setSets(recentSets);
+      if (recentSets.length) {
+        setWeight(recentSets[recentSets.length - 1].weightKg);
+      }
+      setRecognition(null);
+      setManualCorrection("");
+      setView("train");
+      setStatusMessage(`${item.nickname || item.equipmentType} loaded with its exact-machine history.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not load machine history.");
+    }
+  }
+
+  async function handleRename(item: EquipmentLibraryItem, nickname: string) {
+    if (!userId) return;
+    try {
+      await renameEquipment(userId, item.id, nickname);
+      if (activeEquipment?.id === item.id) {
+        setActiveEquipment({
+          ...activeEquipment,
+          equipmentType: nickname.trim() || activeEquipment.equipmentType,
+        });
+      }
+      await refreshMemory();
+      setStatusMessage("Machine nickname updated.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not rename equipment.");
+    }
+  }
+
   async function logSet(event: FormEvent) {
     event.preventDefault();
 
     if (!activeEquipment) {
-      setStatusMessage("Scan and confirm a machine before logging working sets.");
+      setStatusMessage("Scan or choose a saved machine before logging working sets.");
       return;
     }
 
@@ -201,7 +284,8 @@ export default function App() {
         persisted.workoutId,
       );
 
-      setStatusMessage("Set saved. Next target recalculated and persisted.");
+      await refreshMemory();
+      setStatusMessage("Set saved. Machine history, PR metrics and next target are updated.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not save set.");
     }
@@ -216,10 +300,10 @@ export default function App() {
     <main className="shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">DE-EXERCISE / PHASE 2</p>
-          <h1>Scan the machine. Remember the work. Progress on purpose.</h1>
+          <p className="eyebrow">DE-EXERCISE / PHASE 3</p>
+          <h1>Your machines remember what you did last time.</h1>
           <p className="subtle">
-            Equipment recognition feeds a deterministic progression engine. The machine, sets and next target now persist to your account.
+            Scan new equipment or reuse saved machines. Every exact machine keeps its own sets, PRs, strength trend and next target.
           </p>
         </div>
         <div className="hero-actions">
@@ -228,155 +312,187 @@ export default function App() {
         </div>
       </header>
 
+      <nav className="app-nav" aria-label="De-Exercise views">
+        <button type="button" className={view === "train" ? "active" : ""} onClick={() => setView("train")}>Train</button>
+        <button type="button" className={view === "library" ? "active" : ""} onClick={() => setView("library")}>
+          Library <span>{library.length}</span>
+        </button>
+        <button type="button" className={view === "history" ? "active" : ""} onClick={() => setView("history")}>History</button>
+      </nav>
+
       {statusMessage && <div className="status-banner">{statusMessage}</div>}
 
-      <section className="grid two">
-        <article className="card">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">01 / EQUIPMENT</p>
-              <h2>Identify equipment</h2>
-            </div>
-            <span className="badge">AI assisted</span>
-          </div>
+      {view === "library" && (
+        <LibraryView
+          items={library}
+          loading={memoryLoading}
+          onTrain={chooseSavedMachine}
+          onRename={handleRename}
+        />
+      )}
 
-          <label className="upload">
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              capture="environment"
-              onChange={(event) => handleImage(event.target.files?.[0])}
-            />
-            <strong>{recognising ? "Analysing…" : "Take or upload a machine photo"}</strong>
-            <span>JPEG, PNG or WebP</span>
-          </label>
+      {view === "history" && (
+        <HistoryView workouts={workouts} loading={memoryLoading} />
+      )}
 
-          {recognitionError && <p className="error">{recognitionError}</p>}
-
-          {recognition && (
-            <div className="result">
-              <div className="result-top">
+      {view === "train" && (
+        <>
+          <section className="grid two">
+            <article className="card">
+              <div className="section-heading">
                 <div>
-                  <span className="muted">Likely match</span>
-                  <h3>{recognition.equipment_type}</h3>
+                  <p className="eyebrow">01 / EQUIPMENT</p>
+                  <h2>{activeEquipment ? "Active machine" : "Identify equipment"}</h2>
                 </div>
-                <strong>{Math.round(recognition.confidence * 100)}%</strong>
+                <span className="badge">{activeEquipment ? "Memory loaded" : "AI assisted"}</span>
               </div>
 
-              <p className="muted">
-                {[recognition.manufacturer, recognition.model].filter(Boolean).join(" · ") || "Manufacturer/model not confirmed"}
-              </p>
-
-              <div className="chips">
-                {recognition.likely_exercises.map((item) => <span key={item}>{item}</span>)}
-              </div>
-
-              {recognition.confidence < 0.75 && (
-                <div className="correction">
-                  <div className="warning">
-                    Low-confidence match. Correct the machine label before saving it.
-                  </div>
-                  <label>
-                    <span>Confirmed equipment type</span>
-                    <input
-                      value={manualCorrection}
-                      onChange={(event) => setManualCorrection(event.target.value)}
-                      placeholder="e.g. Hammer Strength ISO-Lateral Chest Press"
-                    />
-                  </label>
+              {activeEquipment && (
+                <div className="active-machine active-machine-primary">
+                  <span className="eyebrow">ACTIVE MACHINE</span>
+                  <strong>{activeEquipment.equipmentType}</strong>
+                  <span>{activeEquipment.exerciseName} · {activeEquipment.loadIncrementKg} kg increment</span>
+                  <button type="button" className="secondary-button" onClick={() => setView("library")}>
+                    Choose another saved machine
+                  </button>
                 </div>
               )}
 
-              {recognition.candidate_matches.length > 0 && (
-                <div className="candidate-list">
-                  <span className="muted">Other possibilities</span>
+              <div className="scan-divider">
+                <span>{activeEquipment ? "or scan a new machine" : "scan a new machine"}</span>
+              </div>
+
+              <label className="upload">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  capture="environment"
+                  onChange={(event) => handleImage(event.target.files?.[0])}
+                />
+                <strong>{recognising ? "Analysing…" : "Take or upload a machine photo"}</strong>
+                <span>JPEG, PNG or WebP</span>
+              </label>
+
+              {recognitionError && <p className="error">{recognitionError}</p>}
+
+              {recognition && (
+                <div className="result">
+                  <div className="result-top">
+                    <div>
+                      <span className="muted">Likely match</span>
+                      <h3>{recognition.equipment_type}</h3>
+                    </div>
+                    <strong>{Math.round(recognition.confidence * 100)}%</strong>
+                  </div>
+
+                  <p className="muted">
+                    {[recognition.manufacturer, recognition.model].filter(Boolean).join(" · ") || "Manufacturer/model not confirmed"}
+                  </p>
+
                   <div className="chips">
-                    {recognition.candidate_matches.map((candidate) => (
-                      <button
-                        type="button"
-                        className="chip-button"
-                        key={candidate.equipment_type + candidate.model}
-                        onClick={() => setManualCorrection(candidate.equipment_type)}
-                      >
-                        {candidate.equipment_type} · {Math.round(candidate.confidence * 100)}%
-                      </button>
-                    ))}
+                    {recognition.likely_exercises.map((item) => <span key={item}>{item}</span>)}
                   </div>
+
+                  {recognition.confidence < 0.75 && (
+                    <div className="correction">
+                      <div className="warning">
+                        Low-confidence match. Correct the machine label before saving it.
+                      </div>
+                      <label>
+                        <span>Confirmed equipment type</span>
+                        <input
+                          value={manualCorrection}
+                          onChange={(event) => setManualCorrection(event.target.value)}
+                          placeholder="e.g. Hammer Strength ISO-Lateral Chest Press"
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {recognition.candidate_matches.length > 0 && (
+                    <div className="candidate-list">
+                      <span className="muted">Other possibilities</span>
+                      <div className="chips">
+                        {recognition.candidate_matches.map((candidate) => (
+                          <button
+                            type="button"
+                            className="chip-button"
+                            key={candidate.equipment_type + candidate.model}
+                            onClick={() => setManualCorrection(candidate.equipment_type)}
+                          >
+                            {candidate.equipment_type} · {Math.round(candidate.confidence * 100)}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <p>{recognition.notes}</p>
+                  <button
+                    type="button"
+                    onClick={confirmEquipment}
+                    disabled={savingEquipment || (recognition.confidence < 0.75 && !manualCorrection.trim())}
+                  >
+                    {savingEquipment ? "Saving…" : "Confirm & save equipment"}
+                  </button>
                 </div>
               )}
+            </article>
 
-              <p>{recognition.notes}</p>
-              <button
-                type="button"
-                onClick={confirmEquipment}
-                disabled={savingEquipment || (recognition.confidence < 0.75 && !manualCorrection.trim())}
-              >
-                {savingEquipment ? "Saving…" : "Confirm & save equipment"}
-              </button>
-            </div>
-          )}
-
-          {activeEquipment && (
-            <div className="active-machine">
-              <span className="eyebrow">ACTIVE MACHINE</span>
-              <strong>{activeEquipment.equipmentType}</strong>
-              <span>{activeEquipment.exerciseName} · {activeEquipment.loadIncrementKg} kg increment</span>
-            </div>
-          )}
-        </article>
-
-        <article className="card">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">02 / WORK SET</p>
-              <h2>Log training</h2>
-            </div>
-            <span className="badge">{activeEquipment ? activeEquipment.exerciseName : "Choose machine"}</span>
-          </div>
-
-          <form className="log-form" onSubmit={logSet}>
-            <label>
-              <span>Weight (kg)</span>
-              <input type="number" min="0" step="0.5" value={weight} onChange={(e) => setWeight(Number(e.target.value))} />
-            </label>
-            <label>
-              <span>Reps</span>
-              <input type="number" min="1" max="100" value={reps} onChange={(e) => setReps(Number(e.target.value))} />
-            </label>
-            <label>
-              <span>RIR</span>
-              <input type="number" min="0" max="10" value={rir} onChange={(e) => setRir(Number(e.target.value))} />
-            </label>
-            <button type="submit" disabled={!activeEquipment}>Log set</button>
-          </form>
-
-          <div className="set-list">
-            {sets.length === 0 && (
-              <div className="empty-state">No working sets saved for this machine yet.</div>
-            )}
-            {sets.slice(-5).map((set, index) => (
-              <div className="set-row" key={set.id}>
-                <span>Set {Math.max(1, sets.length - 4 + index)}</span>
-                <strong>{set.weightKg} kg × {set.reps}</strong>
-                <span>{set.rir} RIR</span>
+            <article className="card">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">02 / WORK SET</p>
+                  <h2>Log training</h2>
+                </div>
+                <span className="badge">{activeEquipment ? activeEquipment.exerciseName : "Choose machine"}</span>
               </div>
-            ))}
-          </div>
-        </article>
-      </section>
 
-      <section className="card progression">
-        <div>
-          <p className="eyebrow">03 / PROGRESSION</p>
-          <h2>Next target</h2>
-          <p className="subtle">{recommendation.explanation}</p>
-        </div>
-        <div className="target">
-          <span>{recommendation.action.replace("_", " ")}</span>
-          <strong>{recommendation.targetWeightKg || weight} kg</strong>
-          <small>{recommendation.targetRepLow}–{recommendation.targetRepHigh} reps</small>
-        </div>
-      </section>
+              <form className="log-form" onSubmit={logSet}>
+                <label>
+                  <span>Weight (kg)</span>
+                  <input type="number" min="0" step="0.5" value={weight} onChange={(e) => setWeight(Number(e.target.value))} />
+                </label>
+                <label>
+                  <span>Reps</span>
+                  <input type="number" min="1" max="100" value={reps} onChange={(e) => setReps(Number(e.target.value))} />
+                </label>
+                <label>
+                  <span>RIR</span>
+                  <input type="number" min="0" max="10" value={rir} onChange={(e) => setRir(Number(e.target.value))} />
+                </label>
+                <button type="submit" disabled={!activeEquipment}>Log set</button>
+              </form>
+
+              <div className="set-list">
+                {sets.length === 0 && (
+                  <div className="empty-state">No working sets saved for this machine yet.</div>
+                )}
+                {sets.slice(-5).map((set, index) => (
+                  <div className="set-row" key={set.id}>
+                    <span>Set {Math.max(1, sets.length - 4 + index)}</span>
+                    <strong>{set.weightKg} kg × {set.reps}</strong>
+                    <span>{set.rir} RIR</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </section>
+
+          <section className="card progression">
+            <div>
+              <p className="eyebrow">03 / PROGRESSION</p>
+              <h2>Next target</h2>
+              <p className="subtle">{recommendation.explanation}</p>
+            </div>
+            <div className="target">
+              <span>{recommendation.action.replace("_", " ")}</span>
+              <strong>{recommendation.targetWeightKg || weight} kg</strong>
+              <small>{recommendation.targetRepLow}–{recommendation.targetRepHigh} reps</small>
+            </div>
+          </section>
+        </>
+      )}
     </main>
   );
 }
