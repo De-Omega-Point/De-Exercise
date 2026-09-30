@@ -1001,7 +1001,12 @@ function AuthScreen() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const emailRedirectTo = new URL(import.meta.env.BASE_URL, window.location.origin).toString();
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo },
+        });
         if (error) throw error;
         if (!data.session) {
           setMessage("Account created. Check your email to confirm the address, then sign in.");
