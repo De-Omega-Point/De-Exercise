@@ -60,6 +60,13 @@ export type WorkoutSummary = {
   } | null;
 };
 
+export type ProgressionRule = {
+  repLow: number;
+  repHigh: number;
+  targetSets: number;
+  incrementKg: number;
+};
+
 export type ProgressionRecommendation = {
   action: "increase_reps" | "increase_load" | "hold" | "reduce_load";
   targetWeightKg: number;
