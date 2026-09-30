@@ -10,6 +10,7 @@ AI-assisted gym equipment recognition and progressive-overload tracking.
 4. De-Exercise remembers that exact machine.
 5. Log weight, reps and RIR during training.
 6. A deterministic progression engine recommends the next target and explains why.
+7. Reuse the saved machine later with its exact history, PRs and trend already loaded.
 
 AI proposes equipment identity. It does **not** silently decide training progression.
 
@@ -20,20 +21,35 @@ AI proposes equipment identity. It does **not** silently decide training progres
 - OpenAI Responses API for equipment image understanding
 - GitHub as the source of truth
 
-## Phase 2
+## Phase 3 — Machine Memory
 
-The authenticated persistence loop covers:
+The app now has three primary surfaces:
 
-- account sign-in/sign-up
-- namespaced De-Exercise tables inside the shared D-Move Supabase project
-- saved equipment + exercise mapping
-- exact-machine set history
-- persisted workouts and working sets
-- persisted progression recommendations
-- RLS owner isolation plus same-owner composite foreign keys
-- authenticated equipment-recognition Edge Function
+### Train
 
-Equipment photo Storage is intentionally deferred until the core scan/log loop is verified. The current recognition request sends the selected image directly to the authenticated Edge Function and does not persist the photo.
+- scan and confirm new equipment
+- choose an existing saved machine
+- load exact-machine working-set history
+- log weight, reps and RIR
+- persist progression recommendations
+
+### Library
+
+- browse saved equipment
+- nickname machines for easy recognition in a real gym
+- see last set, best load and estimated 1RM
+- see a lightweight recent-strength trend
+- jump directly into training on that exact machine
+
+### History
+
+- recent workouts
+- working-set count
+- workout volume
+- exercise count
+- top set for each workout
+
+The memory views are calculated from user-owned De-Exercise tables and remain protected by the Phase 2 RLS model.
 
 ## Local setup
 
@@ -56,7 +72,7 @@ De-Exercise tables are prefixed with `de_exercise_` so this product can safely c
 The `recognise-equipment` function requires:
 
 - `OPENAI_API_KEY`
-- optional `OPENAI_VISION_MODEL` override (default: `gpt-6-luna`)
+- optional `OPENAI_VISION_MODEL` override
 
 ## Product boundary
 
