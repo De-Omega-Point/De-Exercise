@@ -35,6 +35,31 @@ export type TrainingSet = {
   createdAt?: string;
 };
 
+export type EquipmentLibraryItem = SavedEquipment & {
+  nickname: string | null;
+  lastUsedAt: string | null;
+  lastSet: TrainingSet | null;
+  bestWeightKg: number;
+  estimated1RmKg: number;
+  totalWorkingSets: number;
+  trend1RmKg: number[];
+};
+
+export type WorkoutSummary = {
+  id: string;
+  startedAt: string;
+  completedAt: string | null;
+  exerciseCount: number;
+  workingSets: number;
+  volumeKg: number;
+  topSet: {
+    equipmentLabel: string;
+    exerciseName: string;
+    weightKg: number;
+    reps: number;
+  } | null;
+};
+
 export type ProgressionRecommendation = {
   action: "increase_reps" | "increase_load" | "hold" | "reduce_load";
   targetWeightKg: number;
