@@ -2,22 +2,31 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { HistoryView } from "./components/HistoryView";
 import { LibraryView } from "./components/LibraryView";
+import { ProgressionRuleEditor } from "./components/ProgressionRuleEditor";
+import { WorkoutSessionBar } from "./components/WorkoutSessionBar";
+import { WorkoutSummaryCard } from "./components/WorkoutSummaryCard";
 import { recogniseEquipment } from "./lib/equipment-recognition";
 import {
   ensureExerciseProfile,
+  finishWorkout,
+  getActiveWorkout,
   listEquipmentLibrary,
   listRecentWorkouts,
+  loadProgressionRule,
   loadRecentSets,
   logTrainingSet,
   renameEquipment,
   saveProgressionRecommendation,
+  saveProgressionRule,
   saveRecognisedEquipment,
+  startWorkout,
 } from "./lib/persistence";
 import { getProgressionRecommendation } from "./lib/progression";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import type {
   EquipmentLibraryItem,
   EquipmentRecognition,
+  ProgressionRule,
   SavedEquipment,
   TrainingSet,
   WorkoutSummary,
@@ -29,6 +38,13 @@ const seedSets: TrainingSet[] = [
   { id: "3", weightKg: 40, reps: 9, rir: 1 },
 ];
 
+const defaultRule: ProgressionRule = {
+  repLow: 8,
+  repHigh: 12,
+  targetSets: 3,
+  incrementKg: 2.5,
+};
+
 type AppView = "train" | "library" | "history";
 
 export default function App() {
@@ -37,9 +53,14 @@ export default function App() {
   const [view, setView] = useState<AppView>("train");
   const [recognition, setRecognition] = useState<EquipmentRecognition | null>(null);
   const [activeEquipment, setActiveEquipment] = useState<SavedEquipment | null>(null);
+  const [activeRule, setActiveRule] = useState<ProgressionRule>(defaultRule);
+  const [activeWorkout, setActiveWorkout] = useState<WorkoutSummary | null>(null);
+  const [completedWorkout, setCompletedWorkout] = useState<WorkoutSummary | null>(null);
   const [manualCorrection, setManualCorrection] = useState("");
   const [recognising, setRecognising] = useState(false);
   const [savingEquipment, setSavingEquipment] = useState(false);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  const [ruleSaving, setRuleSaving] = useState(false);
   const [recognitionError, setRecognitionError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [sets, setSets] = useState<TrainingSet[]>(isSupabaseConfigured ? [] : seedSets);
@@ -64,6 +85,8 @@ export default function App() {
       setAuthReady(true);
       if (!nextSession) {
         setActiveEquipment(null);
+        setActiveWorkout(null);
+        setCompletedWorkout(null);
         setRecognition(null);
         setSets([]);
         setLibrary([]);
@@ -84,10 +107,12 @@ export default function App() {
       ensureExerciseProfile(userId),
       listEquipmentLibrary(userId),
       listRecentWorkouts(userId),
+      getActiveWorkout(userId),
     ])
-      .then(([, equipment, recentWorkouts]) => {
+      .then(([, equipment, recentWorkouts, currentWorkout]) => {
         setLibrary(equipment);
         setWorkouts(recentWorkouts);
+        setActiveWorkout(currentWorkout);
       })
       .catch((error) => {
         setStatusMessage(error instanceof Error ? error.message : "Could not load training memory.");
@@ -97,12 +122,12 @@ export default function App() {
 
   const recommendation = useMemo(
     () => getProgressionRecommendation(sets, {
-      repLow: 8,
-      repHigh: 12,
-      targetSets: 3,
-      incrementKg: activeEquipment?.loadIncrementKg ?? 2.5,
+      repLow: activeRule.repLow,
+      repHigh: activeRule.repHigh,
+      targetSets: activeRule.targetSets,
+      incrementKg: activeRule.incrementKg,
     }),
-    [sets, activeEquipment?.loadIncrementKg],
+    [sets, activeRule],
   );
 
   if (!authReady) {
@@ -127,12 +152,14 @@ export default function App() {
     if (!userId) return;
     setMemoryLoading(true);
     try {
-      const [equipment, recentWorkouts] = await Promise.all([
+      const [equipment, recentWorkouts, currentWorkout] = await Promise.all([
         listEquipmentLibrary(userId),
         listRecentWorkouts(userId),
+        getActiveWorkout(userId),
       ]);
       setLibrary(equipment);
       setWorkouts(recentWorkouts);
+      setActiveWorkout(currentWorkout);
     } finally {
       setMemoryLoading(false);
     }
@@ -145,6 +172,7 @@ export default function App() {
     setStatusMessage("");
     setManualCorrection("");
     setActiveEquipment(null);
+    setActiveRule(defaultRule);
     if (isLive) setSets([]);
 
     try {
@@ -181,19 +209,27 @@ export default function App() {
           loadIncrementKg: 2.5,
         };
         setActiveEquipment(demoEquipment);
+        setActiveRule(defaultRule);
         setStatusMessage("Demo machine confirmed locally.");
         return;
       }
 
       const equipment = await saveRecognisedEquipment(userId, recognition, correction || undefined);
-      const recentSets = await loadRecentSets(userId, equipment.id);
+      const [recentSets, rule] = await Promise.all([
+        loadRecentSets(userId, equipment.id),
+        loadProgressionRule(userId, equipment),
+      ]);
+
       setActiveEquipment(equipment);
+      setActiveRule(rule);
       setSets(recentSets);
+
       if (recentSets.length) {
         setWeight(recentSets[recentSets.length - 1].weightKg);
       }
+
       await refreshMemory();
-      setStatusMessage("Machine saved. It now has its own persistent training memory.");
+      setStatusMessage("Machine saved. Its progression rule and exact-machine history are active.");
     } catch (error) {
       setRecognitionError(error instanceof Error ? error.message : "Could not save equipment.");
     } finally {
@@ -204,17 +240,25 @@ export default function App() {
   async function chooseSavedMachine(item: EquipmentLibraryItem) {
     if (!userId) return;
     setStatusMessage("");
+
     try {
-      const recentSets = await loadRecentSets(userId, item.id);
+      const [recentSets, rule] = await Promise.all([
+        loadRecentSets(userId, item.id),
+        loadProgressionRule(userId, item),
+      ]);
+
       setActiveEquipment(item);
+      setActiveRule(rule);
       setSets(recentSets);
+
       if (recentSets.length) {
         setWeight(recentSets[recentSets.length - 1].weightKg);
       }
+
       setRecognition(null);
       setManualCorrection("");
       setView("train");
-      setStatusMessage(`${item.nickname || item.equipmentType} loaded with its exact-machine history.`);
+      setStatusMessage(`${item.nickname || item.equipmentType} loaded with its history and progression rule.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not load machine history.");
     }
@@ -222,14 +266,9 @@ export default function App() {
 
   async function handleRename(item: EquipmentLibraryItem, nickname: string) {
     if (!userId) return;
+
     try {
       await renameEquipment(userId, item.id, nickname);
-      if (activeEquipment?.id === item.id) {
-        setActiveEquipment({
-          ...activeEquipment,
-          equipmentType: nickname.trim() || activeEquipment.equipmentType,
-        });
-      }
       await refreshMemory();
       setStatusMessage("Machine nickname updated.");
     } catch (error) {
@@ -237,8 +276,117 @@ export default function App() {
     }
   }
 
+  async function handleStartWorkout() {
+    setSessionBusy(true);
+    setCompletedWorkout(null);
+    setStatusMessage("");
+
+    try {
+      if (!isLive || !userId) {
+        setActiveWorkout({
+          id: "demo-workout",
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          exerciseCount: 0,
+          workingSets: 0,
+          volumeKg: 0,
+          topSet: null,
+        });
+        setStatusMessage("Demo workout started.");
+        return;
+      }
+
+      const workout = await startWorkout(userId);
+      setActiveWorkout(workout);
+      await refreshMemory();
+      setStatusMessage("Workout started. Every working set now belongs to this session.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not start workout.");
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
+  async function handleFinishWorkout() {
+    if (!activeWorkout) return;
+
+    setSessionBusy(true);
+    setStatusMessage("");
+
+    try {
+      if (!isLive || !userId) {
+        const finished: WorkoutSummary = {
+          ...activeWorkout,
+          completedAt: new Date().toISOString(),
+          exerciseCount: activeEquipment ? 1 : 0,
+          workingSets: sets.length,
+          volumeKg: sets.reduce((sum, set) => sum + set.weightKg * set.reps, 0),
+          topSet: activeEquipment && sets.length
+            ? {
+                equipmentLabel: activeEquipment.equipmentType,
+                exerciseName: activeEquipment.exerciseName,
+                weightKg: Math.max(...sets.map((set) => set.weightKg)),
+                reps: sets.reduce((best, set) => set.weightKg >= best.weightKg ? set : best, sets[0]).reps,
+              }
+            : null,
+        };
+        setCompletedWorkout(finished);
+        setActiveWorkout(null);
+        setStatusMessage("Demo workout finished.");
+        return;
+      }
+
+      const finished = await finishWorkout(userId, activeWorkout.id);
+      setCompletedWorkout(finished);
+      setActiveWorkout(null);
+      await refreshMemory();
+      setStatusMessage("Workout finished and locked into History.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not finish workout.");
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
+  async function handleSaveRule(rule: ProgressionRule) {
+    if (!activeEquipment) return;
+
+    setRuleSaving(true);
+    setStatusMessage("");
+
+    try {
+      if (!isLive || !userId) {
+        setActiveRule(rule);
+        setActiveEquipment({
+          ...activeEquipment,
+          loadIncrementKg: rule.incrementKg,
+        });
+        setStatusMessage("Demo progression rule updated.");
+        return;
+      }
+
+      const saved = await saveProgressionRule(userId, activeEquipment, rule);
+      setActiveRule(saved);
+      setActiveEquipment({
+        ...activeEquipment,
+        loadIncrementKg: saved.incrementKg,
+      });
+      await refreshMemory();
+      setStatusMessage("Progression rule saved for this exact machine.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not save progression rule.");
+    } finally {
+      setRuleSaving(false);
+    }
+  }
+
   async function logSet(event: FormEvent) {
     event.preventDefault();
+
+    if (!activeWorkout) {
+      setStatusMessage("Start a workout before logging working sets.");
+      return;
+    }
 
     if (!activeEquipment) {
       setStatusMessage("Scan or choose a saved machine before logging working sets.");
@@ -258,23 +406,28 @@ export default function App() {
 
     try {
       if (!isLive || !userId) {
-        setSets((current) => [
-          ...current,
-          { id: crypto.randomUUID(), ...values },
-        ]);
+        const demoSet = { id: crypto.randomUUID(), ...values };
+        const nextSets = [...sets, demoSet];
+        setSets(nextSets);
+        setActiveWorkout({
+          ...activeWorkout,
+          exerciseCount: activeEquipment ? 1 : activeWorkout.exerciseCount,
+          workingSets: activeWorkout.workingSets + 1,
+          volumeKg: activeWorkout.volumeKg + values.weightKg * values.reps,
+        });
         setStatusMessage("Demo set logged locally.");
         return;
       }
 
-      const persisted = await logTrainingSet(userId, activeEquipment, values);
+      const persisted = await logTrainingSet(userId, activeWorkout.id, activeEquipment, values);
       const nextSets = [...sets, persisted.set];
       setSets(nextSets);
 
       const nextRecommendation = getProgressionRecommendation(nextSets, {
-        repLow: 8,
-        repHigh: 12,
-        targetSets: 3,
-        incrementKg: activeEquipment.loadIncrementKg,
+        repLow: activeRule.repLow,
+        repHigh: activeRule.repHigh,
+        targetSets: activeRule.targetSets,
+        incrementKg: activeRule.incrementKg,
       });
 
       await saveProgressionRecommendation(
@@ -285,7 +438,7 @@ export default function App() {
       );
 
       await refreshMemory();
-      setStatusMessage("Set saved. Machine history, PR metrics and next target are updated.");
+      setStatusMessage("Set saved. Session totals and next target are updated.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not save set.");
     }
@@ -300,20 +453,22 @@ export default function App() {
     <main className="shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">DE-EXERCISE / PHASE 3</p>
-          <h1>Your machines remember what you did last time.</h1>
+          <p className="eyebrow">DE-EXERCISE / PHASE 4</p>
+          <h1>Run the workout. Close the loop. Tune the progression.</h1>
           <p className="subtle">
-            Scan new equipment or reuse saved machines. Every exact machine keeps its own sets, PRs, strength trend and next target.
+            Workouts now have explicit boundaries, and each machine can carry its own rep range, set target and load increment.
           </p>
         </div>
         <div className="hero-actions">
-          <div className="status-pill">{isLive ? "Live sync" : "Demo mode"} · kg · 8–12</div>
+          <div className="status-pill">{isLive ? "Live sync" : "Demo mode"} · kg</div>
           {isLive && <button type="button" className="secondary-button" onClick={signOut}>Sign out</button>}
         </div>
       </header>
 
       <nav className="app-nav" aria-label="De-Exercise views">
-        <button type="button" className={view === "train" ? "active" : ""} onClick={() => setView("train")}>Train</button>
+        <button type="button" className={view === "train" ? "active" : ""} onClick={() => setView("train")}>
+          Train {activeWorkout && <span>●</span>}
+        </button>
         <button type="button" className={view === "library" ? "active" : ""} onClick={() => setView("library")}>
           Library <span>{library.length}</span>
         </button>
@@ -337,6 +492,20 @@ export default function App() {
 
       {view === "train" && (
         <>
+          <WorkoutSessionBar
+            workout={activeWorkout}
+            busy={sessionBusy}
+            onStart={handleStartWorkout}
+            onFinish={handleFinishWorkout}
+          />
+
+          {completedWorkout && (
+            <WorkoutSummaryCard
+              workout={completedWorkout}
+              onDismiss={() => setCompletedWorkout(null)}
+            />
+          )}
+
           <section className="grid two">
             <article className="card">
               <div className="section-heading">
@@ -351,7 +520,7 @@ export default function App() {
                 <div className="active-machine active-machine-primary">
                   <span className="eyebrow">ACTIVE MACHINE</span>
                   <strong>{activeEquipment.equipmentType}</strong>
-                  <span>{activeEquipment.exerciseName} · {activeEquipment.loadIncrementKg} kg increment</span>
+                  <span>{activeEquipment.exerciseName} · {activeRule.targetSets} × {activeRule.repLow}–{activeRule.repHigh}</span>
                   <button type="button" className="secondary-button" onClick={() => setView("library")}>
                     Choose another saved machine
                   </button>
@@ -461,8 +630,12 @@ export default function App() {
                   <span>RIR</span>
                   <input type="number" min="0" max="10" value={rir} onChange={(e) => setRir(Number(e.target.value))} />
                 </label>
-                <button type="submit" disabled={!activeEquipment}>Log set</button>
+                <button type="submit" disabled={!activeEquipment || !activeWorkout}>Log set</button>
               </form>
+
+              {!activeWorkout && (
+                <div className="workout-required">Start a workout above to enable set logging.</div>
+              )}
 
               <div className="set-list">
                 {sets.length === 0 && (
@@ -479,12 +652,23 @@ export default function App() {
             </article>
           </section>
 
-          <section className="card progression">
-            <div>
+          <section className="card progression progression-phase4">
+            <div className="progression-copy">
               <p className="eyebrow">03 / PROGRESSION</p>
               <h2>Next target</h2>
               <p className="subtle">{recommendation.explanation}</p>
+
+              {activeEquipment ? (
+                <ProgressionRuleEditor
+                  rule={activeRule}
+                  saving={ruleSaving}
+                  onSave={handleSaveRule}
+                />
+              ) : (
+                <p className="muted">Choose a machine to load its progression rule.</p>
+              )}
             </div>
+
             <div className="target">
               <span>{recommendation.action.replace("_", " ")}</span>
               <strong>{recommendation.targetWeightKg || weight} kg</strong>
