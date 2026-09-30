@@ -33,6 +33,9 @@ export type TrainingSet = {
   reps: number;
   rir: number;
   createdAt?: string;
+  workoutId?: string;
+  workoutExerciseId?: string;
+  setNo?: number;
 };
 
 export type EquipmentLibraryItem = SavedEquipment & {
@@ -43,12 +46,14 @@ export type EquipmentLibraryItem = SavedEquipment & {
   estimated1RmKg: number;
   totalWorkingSets: number;
   trend1RmKg: number[];
+  photoUrl: string | null;
 };
 
 export type WorkoutSummary = {
   id: string;
   startedAt: string;
   completedAt: string | null;
+  notes: string | null;
   exerciseCount: number;
   workingSets: number;
   volumeKg: number;
