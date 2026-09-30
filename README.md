@@ -4,13 +4,14 @@ AI-assisted gym equipment recognition and progressive-overload tracking.
 
 ## Product loop
 
-1. Photograph a piece of gym equipment.
-2. AI identifies the likely machine and exercise options.
-3. The user confirms or corrects the match.
-4. De-Exercise remembers that exact machine.
-5. Log weight, reps and RIR during training.
-6. A deterministic progression engine recommends the next target and explains why.
-7. Reuse the saved machine later with its exact history, PRs and trend already loaded.
+1. Start a workout.
+2. Photograph new equipment or choose a saved machine.
+3. Confirm the equipment identity when AI recognition is used.
+4. Load that exact machine's history and progression rule.
+5. Log weight, reps and RIR.
+6. The deterministic progression engine updates the next target.
+7. Finish the workout and preserve a clean session summary.
+8. Return later with the machine's history, PRs, trend and rule intact.
 
 AI proposes equipment identity. It does **not** silently decide training progression.
 
@@ -21,35 +22,46 @@ AI proposes equipment identity. It does **not** silently decide training progres
 - OpenAI Responses API for equipment image understanding
 - GitHub as the source of truth
 
-## Phase 3 — Machine Memory
+## Phase 4 — Workout Lifecycle + Progression Control
 
-The app now has three primary surfaces:
+### Explicit workout sessions
 
-### Train
+- Start Workout creates or resumes one open workout.
+- Working sets require an active workout.
+- Finish Workout writes `completed_at`.
+- The completed session shows duration, exercise count, working sets, volume and top set.
+- Closed workouts remain in History and are not reused for future sets.
 
-- scan and confirm new equipment
-- choose an existing saved machine
-- load exact-machine working-set history
-- log weight, reps and RIR
-- persist progression recommendations
+### Machine-specific progression rules
 
-### Library
+Each exact machine/exercise pairing can store:
 
-- browse saved equipment
-- nickname machines for easy recognition in a real gym
-- see last set, best load and estimated 1RM
-- see a lightweight recent-strength trend
-- jump directly into training on that exact machine
+- minimum reps
+- maximum reps
+- target working sets
+- load increment in kilograms
 
-### History
+The progression engine remains deterministic and explainable. Editing a rule changes the inputs to the same transparent algorithm rather than handing authority to a generative model.
 
-- recent workouts
-- working-set count
-- workout volume
-- exercise count
-- top set for each workout
+## Earlier phases
 
-The memory views are calculated from user-owned De-Exercise tables and remain protected by the Phase 2 RLS model.
+### Phase 3 — Machine Memory
+
+- Train / Library / History navigation
+- saved equipment library
+- machine nicknames
+- exact-machine history
+- best load and estimated 1RM
+- recent strength trends
+- recent workout summaries
+
+### Phase 2 — Persistence
+
+- Supabase Auth
+- namespaced `de_exercise_*` tables
+- RLS user isolation
+- persisted equipment, workouts, sets and progression recommendations
+- authenticated `recognise-equipment` Edge Function
 
 ## Local setup
 
@@ -68,11 +80,6 @@ Server secrets such as `OPENAI_API_KEY` belong in Supabase Edge Function secrets
 Shared Supabase project: `D-Move`.
 
 De-Exercise tables are prefixed with `de_exercise_` so this product can safely coexist with De-Movement in the same project.
-
-The `recognise-equipment` function requires:
-
-- `OPENAI_API_KEY`
-- optional `OPENAI_VISION_MODEL` override
 
 ## Product boundary
 
