@@ -24,6 +24,25 @@ AI proposes equipment identity. It does **not** silently decide training progres
 - OpenAI Responses API for equipment image understanding
 - GitHub as the source of truth
 
+## Phase 6 — Routines + Session Queue
+
+### Saved routines
+
+- create routines from equipment already saved in the Library
+- order machines before saving
+- each saved machine can appear once per routine
+- machine-specific progression rules remain the single source of truth for target sets, rep ranges and load increments
+- routines can be started or deleted from the Routines view
+
+### Live routine queue
+
+- starting a routine binds it to the workout
+- the active routine survives reloads through `workouts.routine_id`
+- queue progress is calculated from real working sets in the current workout
+- routine items show working-set completion against each machine's target sets
+- any routine machine can be loaded with one tap
+- a Next Machine control advances through unfinished work
+
 ## Phase 5 — Reversible Logging + Visual Machine Memory
 
 ### Safe set correction
