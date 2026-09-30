@@ -1021,3 +1021,278 @@ textarea {
     grid-column: 1 / -1;
   }
 }
+
+
+/* Phase 6: routines and session queue */
+
+.routine-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.routine-card {
+  display: grid;
+  gap: 15px;
+}
+
+.routine-card-top,
+.routine-builder-heading,
+.routine-queue-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.routine-preview {
+  display: grid;
+  gap: 7px;
+}
+
+.routine-preview > div {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 2px 9px;
+  align-items: center;
+  border: 1px solid #252d35;
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: #0d1115;
+}
+
+.routine-preview > div > span {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #1b2229;
+  color: #c9d1d9;
+  font-size: .72rem;
+  font-weight: 900;
+}
+
+.routine-preview small,
+.routine-order-row small,
+.routine-machine-option small {
+  color: #7e8994;
+}
+
+.routine-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.routine-card-actions button:first-child {
+  flex: 1;
+}
+
+.routine-builder {
+  display: grid;
+  gap: 16px;
+}
+
+.routine-name-field {
+  display: grid;
+  gap: 6px;
+}
+
+.routine-name-field > span,
+.builder-label {
+  color: #87929d;
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.routine-builder-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.routine-builder-grid > div {
+  min-width: 0;
+}
+
+.routine-machine-pool,
+.routine-order-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.routine-machine-option {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  text-align: left;
+  min-height: 54px;
+  border: 1px solid #28313a;
+  background: #0e1318;
+  color: #edf2f7;
+}
+
+.routine-machine-option span,
+.routine-machine-option small {
+  grid-column: 1;
+}
+
+.routine-machine-option strong {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: #91a0ad;
+}
+
+.routine-order-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #283039;
+  border-radius: 13px;
+  padding: 8px 9px;
+  background: #0e1216;
+}
+
+.routine-order-row > div:nth-child(2) {
+  display: grid;
+}
+
+.routine-sequence {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: #1b2229;
+  font-size: .72rem;
+  font-weight: 900;
+}
+
+.routine-order-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.routine-queue {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.routine-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #20272e;
+}
+
+.routine-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #dce4eb;
+  transition: width .2s ease;
+}
+
+.routine-queue-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 7px;
+}
+
+.routine-queue-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 64px;
+  border: 1px solid #283039;
+  background: #0f1419;
+  color: #dfe6ed;
+  text-align: left;
+}
+
+.routine-queue-item > span {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #20272e;
+  font-size: .7rem;
+}
+
+.routine-queue-item > div {
+  display: grid;
+}
+
+.routine-queue-item small {
+  color: #7d8994;
+}
+
+.routine-queue-item em {
+  grid-column: 2;
+  color: #98a4af;
+  font-size: .72rem;
+  font-style: normal;
+}
+
+.routine-queue-item.active {
+  border-color: #83919e;
+  background: #161d23;
+}
+
+.routine-queue-item.complete {
+  border-color: #31503f;
+}
+
+.routine-queue-item.complete > span {
+  background: #193225;
+  color: #afd5bc;
+}
+
+.routine-next-button {
+  justify-self: start;
+}
+
+@media (max-width: 800px) {
+  .routine-grid,
+  .routine-builder-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .routine-queue-list {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .routine-queue-list {
+    grid-template-columns: 1fr;
+  }
+
+  .routine-card-actions,
+  .routine-order-actions {
+    flex-wrap: wrap;
+  }
+
+  .routine-card-actions button {
+    width: 100%;
+  }
+
+  .routine-order-row {
+    grid-template-columns: auto 1fr;
+  }
+
+  .routine-order-actions {
+    grid-column: 1 / -1;
+  }
+
+  .routine-next-button {
+    width: 100%;
+  }
+}
