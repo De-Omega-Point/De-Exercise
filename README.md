@@ -7,43 +7,56 @@ AI-assisted gym equipment recognition and progressive-overload tracking.
 1. Start a workout.
 2. Photograph new equipment or choose a saved machine.
 3. Confirm the equipment identity when AI recognition is used.
-4. Load that exact machine's history and progression rule.
-5. Log weight, reps and RIR.
-6. The deterministic progression engine updates the next target.
-7. Finish the workout and preserve a clean session summary.
-8. Return later with the machine's history, PRs, trend and rule intact.
+4. Save the scan photo privately as part of that exact machine's memory.
+5. Load the machine's history and progression rule.
+6. Log weight, reps and RIR.
+7. Correct or undo mistakes from the current workout without rewriting history.
+8. Keep useful workout notes.
+9. Finish the workout and preserve a clean session summary.
+10. Return later with the machine's photo, history, PRs, trend, notes and rule intact.
 
 AI proposes equipment identity. It does **not** silently decide training progression.
 
 ## Stack
 
 - React + TypeScript + Vite
-- Supabase Auth, Postgres and Edge Functions
+- Supabase Auth, Postgres, Storage and Edge Functions
 - OpenAI Responses API for equipment image understanding
 - GitHub as the source of truth
 
-## Phase 4 — Workout Lifecycle + Progression Control
+## Phase 5 — Reversible Logging + Visual Machine Memory
 
-### Explicit workout sessions
+### Safe set correction
 
-- Start Workout creates or resumes one open workout.
-- Working sets require an active workout.
-- Finish Workout writes `completed_at`.
-- The completed session shows duration, exercise count, working sets, volume and top set.
-- Closed workouts remain in History and are not reused for future sets.
+- sets from the active workout can be edited
+- only the latest active-workout set exposes Undo
+- historical sets are visible but locked in the training surface
+- corrections and undo operations recalculate session totals
+- progression recommendations are recalculated after every correction
 
-### Machine-specific progression rules
+### Workout notes
 
-Each exact machine/exercise pairing can store:
+- notes can be saved while a workout is active
+- notes persist in the workout record
+- recent History surfaces the saved note
 
-- minimum reps
-- maximum reps
-- target working sets
-- load increment in kilograms
+### Private equipment photos
 
-The progression engine remains deterministic and explainable. Editing a rule changes the inputs to the same transparent algorithm rather than handing authority to a generative model.
+- the photo used for recognition can be stored after the user confirms the machine
+- photos live in a private Supabase Storage bucket
+- object paths are scoped under the authenticated user's ID
+- Storage RLS restricts upload/read/update/delete to the owning user
+- the equipment library uses short-lived signed URLs for display
+- bucket uploads are limited to JPEG, PNG and WebP up to 10 MB
 
 ## Earlier phases
+
+### Phase 4 — Workout Lifecycle + Progression Control
+
+- explicit Start / Finish Workout
+- live session timer and totals
+- completed workout summary
+- per-machine rep range, target sets and load increment
 
 ### Phase 3 — Machine Memory
 
@@ -80,6 +93,8 @@ Server secrets such as `OPENAI_API_KEY` belong in Supabase Edge Function secrets
 Shared Supabase project: `D-Move`.
 
 De-Exercise tables are prefixed with `de_exercise_` so this product can safely coexist with De-Movement in the same project.
+
+The equipment photo bucket is `de-exercise-equipment` and is private.
 
 ## Product boundary
 
