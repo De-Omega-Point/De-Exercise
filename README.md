@@ -115,6 +115,23 @@ De-Exercise tables are prefixed with `de_exercise_` so this product can safely c
 
 The equipment photo bucket is `de-exercise-equipment` and is private.
 
+
+## GitHub Pages production
+
+Production target:
+
+- https://de-omega-point.github.io/De-Exercise/
+
+The Pages workflow builds on pushes to `main` with:
+
+- `VITE_SUPABASE_URL=https://pbqxkcigkiaougkqcolq.supabase.co`
+- the active Supabase publishable key
+- Vite production base path `/De-Exercise/`
+
+Email sign-up requests use the current Vite `BASE_URL` as `emailRedirectTo`, so production confirmations point back to the Pages app while local development continues to use `/`.
+
+GitHub Pages must be enabled for this repository with **Source = GitHub Actions**. Supabase Auth must also allow the production Pages URL as a redirect URL.
+
 ## Product boundary
 
 De-Exercise is a training log and progression tool, not a medical or injury-diagnosis system.
