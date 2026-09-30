@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { EditableSetList } from "./components/EditableSetList";
 import { HistoryView } from "./components/HistoryView";
 import { LibraryView } from "./components/LibraryView";
 import { ProgressionRuleEditor } from "./components/ProgressionRuleEditor";
@@ -7,6 +8,7 @@ import { WorkoutSessionBar } from "./components/WorkoutSessionBar";
 import { WorkoutSummaryCard } from "./components/WorkoutSummaryCard";
 import { recogniseEquipment } from "./lib/equipment-recognition";
 import {
+  deleteTrainingSet,
   ensureExerciseProfile,
   finishWorkout,
   getActiveWorkout,
@@ -19,7 +21,10 @@ import {
   saveProgressionRecommendation,
   saveProgressionRule,
   saveRecognisedEquipment,
+  saveWorkoutNotes,
   startWorkout,
+  updateTrainingSet,
+  uploadEquipmentPhoto,
 } from "./lib/persistence";
 import { getProgressionRecommendation } from "./lib/progression";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
@@ -33,9 +38,9 @@ import type {
 } from "./lib/types";
 
 const seedSets: TrainingSet[] = [
-  { id: "1", weightKg: 40, reps: 10, rir: 2 },
-  { id: "2", weightKg: 40, reps: 10, rir: 2 },
-  { id: "3", weightKg: 40, reps: 9, rir: 1 },
+  { id: "1", weightKg: 40, reps: 10, rir: 2, workoutId: "history-1", setNo: 1 },
+  { id: "2", weightKg: 40, reps: 10, rir: 2, workoutId: "history-1", setNo: 2 },
+  { id: "3", weightKg: 40, reps: 9, rir: 1, workoutId: "history-1", setNo: 3 },
 ];
 
 const defaultRule: ProgressionRule = {
@@ -52,6 +57,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
   const [view, setView] = useState<AppView>("train");
   const [recognition, setRecognition] = useState<EquipmentRecognition | null>(null);
+  const [pendingPhoto, setPendingPhoto] = useState<File | null>(null);
   const [activeEquipment, setActiveEquipment] = useState<SavedEquipment | null>(null);
   const [activeRule, setActiveRule] = useState<ProgressionRule>(defaultRule);
   const [activeWorkout, setActiveWorkout] = useState<WorkoutSummary | null>(null);
@@ -60,6 +66,8 @@ export default function App() {
   const [recognising, setRecognising] = useState(false);
   const [savingEquipment, setSavingEquipment] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
+  const [setMutating, setSetMutating] = useState(false);
+  const [noteSaving, setNoteSaving] = useState(false);
   const [ruleSaving, setRuleSaving] = useState(false);
   const [recognitionError, setRecognitionError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
@@ -88,6 +96,7 @@ export default function App() {
         setActiveWorkout(null);
         setCompletedWorkout(null);
         setRecognition(null);
+        setPendingPhoto(null);
         setSets([]);
         setLibrary([]);
         setWorkouts([]);
@@ -173,6 +182,7 @@ export default function App() {
     setManualCorrection("");
     setActiveEquipment(null);
     setActiveRule(defaultRule);
+    setPendingPhoto(file);
     if (isLive) setSets([]);
 
     try {
@@ -210,11 +220,24 @@ export default function App() {
         };
         setActiveEquipment(demoEquipment);
         setActiveRule(defaultRule);
+        setPendingPhoto(null);
         setStatusMessage("Demo machine confirmed locally.");
         return;
       }
 
       const equipment = await saveRecognisedEquipment(userId, recognition, correction || undefined);
+      let photoMessage = "";
+
+      if (pendingPhoto) {
+        try {
+          await uploadEquipmentPhoto(userId, equipment.id, pendingPhoto);
+        } catch (error) {
+          photoMessage = error instanceof Error
+            ? ` Machine saved, but the photo could not be stored: ${error.message}`
+            : " Machine saved, but the photo could not be stored.";
+        }
+      }
+
       const [recentSets, rule] = await Promise.all([
         loadRecentSets(userId, equipment.id),
         loadProgressionRule(userId, equipment),
@@ -223,13 +246,14 @@ export default function App() {
       setActiveEquipment(equipment);
       setActiveRule(rule);
       setSets(recentSets);
+      setPendingPhoto(null);
 
       if (recentSets.length) {
         setWeight(recentSets[recentSets.length - 1].weightKg);
       }
 
       await refreshMemory();
-      setStatusMessage("Machine saved. Its progression rule and exact-machine history are active.");
+      setStatusMessage(`Machine saved with persistent memory.${photoMessage}`);
     } catch (error) {
       setRecognitionError(error instanceof Error ? error.message : "Could not save equipment.");
     } finally {
@@ -250,6 +274,7 @@ export default function App() {
       setActiveEquipment(item);
       setActiveRule(rule);
       setSets(recentSets);
+      setPendingPhoto(null);
 
       if (recentSets.length) {
         setWeight(recentSets[recentSets.length - 1].weightKg);
@@ -287,6 +312,7 @@ export default function App() {
           id: "demo-workout",
           startedAt: new Date().toISOString(),
           completedAt: null,
+          notes: null,
           exerciseCount: 0,
           workingSets: 0,
           volumeKg: 0,
@@ -315,18 +341,19 @@ export default function App() {
 
     try {
       if (!isLive || !userId) {
+        const currentSets = sets.filter((set) => set.workoutId === activeWorkout.id);
         const finished: WorkoutSummary = {
           ...activeWorkout,
           completedAt: new Date().toISOString(),
-          exerciseCount: activeEquipment ? 1 : 0,
-          workingSets: sets.length,
-          volumeKg: sets.reduce((sum, set) => sum + set.weightKg * set.reps, 0),
-          topSet: activeEquipment && sets.length
+          exerciseCount: activeEquipment && currentSets.length ? 1 : 0,
+          workingSets: currentSets.length,
+          volumeKg: currentSets.reduce((sum, set) => sum + set.weightKg * set.reps, 0),
+          topSet: activeEquipment && currentSets.length
             ? {
                 equipmentLabel: activeEquipment.equipmentType,
                 exerciseName: activeEquipment.exerciseName,
-                weightKg: Math.max(...sets.map((set) => set.weightKg)),
-                reps: sets.reduce((best, set) => set.weightKg >= best.weightKg ? set : best, sets[0]).reps,
+                weightKg: Math.max(...currentSets.map((set) => set.weightKg)),
+                reps: currentSets.reduce((best, set) => set.weightKg >= best.weightKg ? set : best, currentSets[0]).reps,
               }
             : null,
         };
@@ -345,6 +372,29 @@ export default function App() {
       setStatusMessage(error instanceof Error ? error.message : "Could not finish workout.");
     } finally {
       setSessionBusy(false);
+    }
+  }
+
+  async function handleSaveNote(note: string) {
+    if (!activeWorkout) return;
+
+    setNoteSaving(true);
+    setStatusMessage("");
+
+    try {
+      if (!isLive || !userId) {
+        setActiveWorkout({ ...activeWorkout, notes: note.trim() || null });
+        setStatusMessage("Demo workout note saved.");
+        return;
+      }
+
+      const saved = await saveWorkoutNotes(userId, activeWorkout.id, note);
+      setActiveWorkout({ ...activeWorkout, notes: saved });
+      setStatusMessage("Workout note saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not save workout note.");
+    } finally {
+      setNoteSaving(false);
     }
   }
 
@@ -393,20 +443,22 @@ export default function App() {
       return;
     }
 
-    if (!Number.isFinite(weight) || weight < 0 || reps < 1 || rir < 0 || rir > 10) {
+    if (!validSetValues(weight, reps, rir)) {
       setStatusMessage("Check weight, reps and RIR before logging.");
       return;
     }
 
-    const values = {
-      weightKg: Math.round(weight * 2) / 2,
-      reps: Math.round(reps),
-      rir: Math.round(rir),
-    };
+    const values = cleanSetValues(weight, reps, rir);
 
     try {
       if (!isLive || !userId) {
-        const demoSet = { id: crypto.randomUUID(), ...values };
+        const activeCount = sets.filter((set) => set.workoutId === activeWorkout.id).length;
+        const demoSet: TrainingSet = {
+          id: crypto.randomUUID(),
+          ...values,
+          workoutId: activeWorkout.id,
+          setNo: activeCount + 1,
+        };
         const nextSets = [...sets, demoSet];
         setSets(nextSets);
         setActiveWorkout({
@@ -423,25 +475,106 @@ export default function App() {
       const nextSets = [...sets, persisted.set];
       setSets(nextSets);
 
-      const nextRecommendation = getProgressionRecommendation(nextSets, {
-        repLow: activeRule.repLow,
-        repHigh: activeRule.repHigh,
-        targetSets: activeRule.targetSets,
-        incrementKg: activeRule.incrementKg,
-      });
-
-      await saveProgressionRecommendation(
-        userId,
-        activeEquipment,
-        nextRecommendation,
-        persisted.workoutId,
-      );
-
+      await persistRecalculatedRecommendation(userId, activeWorkout.id, activeEquipment, nextSets);
       await refreshMemory();
       setStatusMessage("Set saved. Session totals and next target are updated.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not save set.");
     }
+  }
+
+  async function handleUpdateSet(
+    set: TrainingSet,
+    values: { weightKg: number; reps: number; rir: number },
+  ) {
+    if (!activeWorkout || !activeEquipment) return;
+
+    if (!validSetValues(values.weightKg, values.reps, values.rir)) {
+      setStatusMessage("Check the edited weight, reps and RIR.");
+      return;
+    }
+
+    const clean = cleanSetValues(values.weightKg, values.reps, values.rir);
+    setSetMutating(true);
+    setStatusMessage("");
+
+    try {
+      if (!isLive || !userId) {
+        const nextSets = sets.map((item) => item.id === set.id ? { ...item, ...clean } : item);
+        setSets(nextSets);
+        recalculateDemoWorkout(nextSets);
+        setStatusMessage("Demo set corrected.");
+        return;
+      }
+
+      const updated = await updateTrainingSet(userId, activeWorkout.id, set.id, clean);
+      const nextSets = sets.map((item) => item.id === set.id ? updated : item);
+      setSets(nextSets);
+
+      await persistRecalculatedRecommendation(userId, activeWorkout.id, activeEquipment, nextSets);
+      await refreshMemory();
+      setStatusMessage("Set corrected. Session totals and progression target recalculated.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not edit set.");
+    } finally {
+      setSetMutating(false);
+    }
+  }
+
+  async function handleUndoSet(set: TrainingSet) {
+    if (!activeWorkout || !activeEquipment) return;
+
+    setSetMutating(true);
+    setStatusMessage("");
+
+    try {
+      if (!isLive || !userId) {
+        const nextSets = sets.filter((item) => item.id !== set.id);
+        setSets(nextSets);
+        recalculateDemoWorkout(nextSets);
+        setStatusMessage("Last demo set undone.");
+        return;
+      }
+
+      await deleteTrainingSet(userId, activeWorkout.id, set.id);
+      const nextSets = sets.filter((item) => item.id !== set.id);
+      setSets(nextSets);
+
+      await persistRecalculatedRecommendation(userId, activeWorkout.id, activeEquipment, nextSets);
+      await refreshMemory();
+      setStatusMessage("Last set undone. Session totals and progression target recalculated.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Could not undo set.");
+    } finally {
+      setSetMutating(false);
+    }
+  }
+
+  async function persistRecalculatedRecommendation(
+    uid: string,
+    workoutId: string,
+    equipment: SavedEquipment,
+    nextSets: TrainingSet[],
+  ) {
+    const nextRecommendation = getProgressionRecommendation(nextSets, {
+      repLow: activeRule.repLow,
+      repHigh: activeRule.repHigh,
+      targetSets: activeRule.targetSets,
+      incrementKg: activeRule.incrementKg,
+    });
+
+    await saveProgressionRecommendation(uid, equipment, nextRecommendation, workoutId);
+  }
+
+  function recalculateDemoWorkout(nextSets: TrainingSet[]) {
+    if (!activeWorkout) return;
+    const current = nextSets.filter((set) => set.workoutId === activeWorkout.id);
+    setActiveWorkout({
+      ...activeWorkout,
+      workingSets: current.length,
+      exerciseCount: activeEquipment && current.length ? 1 : 0,
+      volumeKg: current.reduce((sum, set) => sum + set.weightKg * set.reps, 0),
+    });
   }
 
   async function signOut() {
@@ -453,10 +586,10 @@ export default function App() {
     <main className="shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">DE-EXERCISE / PHASE 4</p>
-          <h1>Run the workout. Close the loop. Tune the progression.</h1>
+          <p className="eyebrow">DE-EXERCISE / PHASE 5</p>
+          <h1>Correct the log. Remember the machine. Keep the useful context.</h1>
           <p className="subtle">
-            Workouts now have explicit boundaries, and each machine can carry its own rep range, set target and load increment.
+            Today’s sets are reversible, workout notes persist, and scanned equipment photos become private machine memory.
           </p>
         </div>
         <div className="hero-actions">
@@ -495,8 +628,10 @@ export default function App() {
           <WorkoutSessionBar
             workout={activeWorkout}
             busy={sessionBusy}
+            noteSaving={noteSaving}
             onStart={handleStartWorkout}
             onFinish={handleFinishWorkout}
+            onSaveNote={handleSaveNote}
           />
 
           {completedWorkout && (
@@ -539,7 +674,7 @@ export default function App() {
                   onChange={(event) => handleImage(event.target.files?.[0])}
                 />
                 <strong>{recognising ? "Analysing…" : "Take or upload a machine photo"}</strong>
-                <span>JPEG, PNG or WebP</span>
+                <span>Saved privately after confirmation · max 10 MB</span>
               </label>
 
               {recognitionError && <p className="error">{recognitionError}</p>}
@@ -637,18 +772,13 @@ export default function App() {
                 <div className="workout-required">Start a workout above to enable set logging.</div>
               )}
 
-              <div className="set-list">
-                {sets.length === 0 && (
-                  <div className="empty-state">No working sets saved for this machine yet.</div>
-                )}
-                {sets.slice(-5).map((set, index) => (
-                  <div className="set-row" key={set.id}>
-                    <span>Set {Math.max(1, sets.length - 4 + index)}</span>
-                    <strong>{set.weightKg} kg × {set.reps}</strong>
-                    <span>{set.rir} RIR</span>
-                  </div>
-                ))}
-              </div>
+              <EditableSetList
+                sets={sets}
+                activeWorkoutId={activeWorkout?.id ?? null}
+                busy={setMutating}
+                onUpdate={handleUpdateSet}
+                onUndo={handleUndoSet}
+              />
             </article>
           </section>
 
@@ -679,6 +809,25 @@ export default function App() {
       )}
     </main>
   );
+}
+
+function validSetValues(weightKg: number, reps: number, rir: number) {
+  return Number.isFinite(weightKg)
+    && Number.isFinite(reps)
+    && Number.isFinite(rir)
+    && weightKg >= 0
+    && reps >= 1
+    && reps <= 100
+    && rir >= 0
+    && rir <= 10;
+}
+
+function cleanSetValues(weightKg: number, reps: number, rir: number) {
+  return {
+    weightKg: Math.round(weightKg * 2) / 2,
+    reps: Math.round(reps),
+    rir: Math.round(rir),
+  };
 }
 
 function AuthScreen() {
