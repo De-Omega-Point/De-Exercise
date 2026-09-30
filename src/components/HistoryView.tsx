@@ -15,7 +15,7 @@ export function HistoryView({ workouts, loading }: HistoryViewProps) {
         <div>
           <p className="eyebrow">TRAINING HISTORY</p>
           <h2>Recent workouts</h2>
-          <p className="subtle">A compact audit trail of the work that feeds your progression engine.</p>
+          <p className="subtle">A compact audit trail of the work, including the notes you chose to keep.</p>
         </div>
         <div className="memory-kpis">
           <Kpi label="Workouts" value={String(workouts.length)} />
@@ -35,7 +35,7 @@ export function HistoryView({ workouts, loading }: HistoryViewProps) {
 
       <div className="history-list">
         {workouts.map((workout) => (
-          <article className="card history-card" key={workout.id}>
+          <article className="card history-card history-card-phase5" key={workout.id}>
             <div className="history-date">
               <span>{new Date(workout.startedAt).toLocaleDateString(undefined, { weekday: "short" })}</span>
               <strong>{new Date(workout.startedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</strong>
@@ -63,6 +63,10 @@ export function HistoryView({ workouts, loading }: HistoryViewProps) {
             <span className={workout.completedAt ? "history-status complete" : "history-status"}>
               {workout.completedAt ? "Complete" : "In progress"}
             </span>
+
+            {workout.notes && (
+              <p className="history-note">{workout.notes}</p>
+            )}
           </article>
         ))}
       </div>
