@@ -816,3 +816,208 @@ h3 { font-size: 1.15rem; }
     width: 100%;
   }
 }
+
+
+/* Phase 5: reversible logging, notes and private machine photos */
+
+textarea {
+  width: 100%;
+  min-height: 86px;
+  resize: vertical;
+  border: 1px solid #2d343c;
+  border-radius: 14px;
+  padding: 11px 12px;
+  background: #0d1013;
+  color: #f8fafc;
+  font: inherit;
+  line-height: 1.45;
+}
+
+.workout-session-stack {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.workout-session-stack .workout-session-bar {
+  margin-bottom: 0;
+}
+
+.workout-note {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 10px;
+  border: 1px solid #242c33;
+  border-radius: 16px;
+  padding: 12px;
+  background: #0e1216;
+}
+
+.workout-note label {
+  display: grid;
+  gap: 6px;
+}
+
+.workout-note label > span {
+  color: #87929d;
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.machine-photo {
+  overflow: hidden;
+  min-height: 150px;
+  border: 1px solid #252d35;
+  border-radius: 16px;
+  background: #0d1115;
+}
+
+.machine-photo img,
+.machine-photo-placeholder {
+  display: block;
+  width: 100%;
+  height: 180px;
+}
+
+.machine-photo img {
+  object-fit: cover;
+}
+
+.machine-photo-placeholder {
+  display: grid;
+  place-items: center;
+  color: #59646f;
+  font-size: .7rem;
+  font-weight: 900;
+  letter-spacing: .2em;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.025), transparent 45%),
+    #0d1115;
+}
+
+.editable-set-list {
+  margin-top: 18px;
+}
+
+.set-row-phase5 {
+  display: grid;
+  grid-template-columns: minmax(90px, .8fr) 1fr auto auto;
+  min-height: 58px;
+}
+
+.set-identity {
+  display: grid;
+  gap: 2px;
+}
+
+.set-identity small {
+  color: #66717c;
+  font-size: .68rem;
+}
+
+.set-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mini-button {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: .72rem;
+}
+
+.danger-ghost {
+  border: 1px solid #563639;
+  background: transparent;
+  color: #f0aeb4;
+}
+
+.set-edit-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto auto;
+  gap: 7px;
+  align-items: end;
+  padding: 10px 0;
+  border-bottom: 1px solid #242a31;
+}
+
+.set-edit-row label {
+  display: grid;
+  gap: 4px;
+}
+
+.set-edit-row label span {
+  color: #78838e;
+  font-size: .68rem;
+}
+
+.set-edit-row input {
+  min-height: 42px;
+}
+
+.history-card-phase5 {
+  grid-template-columns: minmax(130px, .7fr) 1.4fr 1.1fr auto;
+}
+
+.history-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  border-top: 1px solid #252d35;
+  padding-top: 11px;
+  color: #aeb7c1;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+  .workout-note {
+    grid-template-columns: 1fr;
+  }
+
+  .workout-note button {
+    width: 100%;
+  }
+
+  .set-row-phase5 {
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    padding: 9px 0;
+  }
+
+  .set-row-phase5 > span {
+    justify-self: end;
+  }
+
+  .set-actions {
+    grid-column: 1 / -1;
+  }
+
+  .set-edit-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .set-edit-row button {
+    min-height: 42px;
+  }
+
+  .history-card-phase5 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 430px) {
+  .machine-photo img,
+  .machine-photo-placeholder {
+    height: 150px;
+  }
+
+  .set-edit-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .set-edit-row label:first-child {
+    grid-column: 1 / -1;
+  }
+}
