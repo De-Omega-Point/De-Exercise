@@ -79,3 +79,21 @@ export type ProgressionRecommendation = {
   targetRepHigh: number;
   explanation: string;
 };
+
+
+export type RoutineItem = {
+  id: string;
+  sequenceNo: number;
+  equipment: EquipmentLibraryItem;
+  targetSets: number;
+};
+
+export type Routine = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  items: RoutineItem[];
+};
+
+export type RoutineProgress = Record<string, number>;
