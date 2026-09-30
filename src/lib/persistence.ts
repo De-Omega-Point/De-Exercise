@@ -9,9 +9,12 @@ import type {
 } from "./types";
 import { supabase } from "./supabase";
 
+const EQUIPMENT_BUCKET = "de-exercise-equipment";
+
 const tables = {
   profiles: "de_exercise_profiles",
   equipment: "de_exercise_equipment",
+  equipmentImages: "de_exercise_equipment_images",
   exercises: "de_exercise_exercises",
   equipmentExercises: "de_exercise_equipment_exercises",
   workouts: "de_exercise_workouts",
@@ -128,6 +131,66 @@ export async function saveRecognisedEquipment(
   };
 }
 
+export async function uploadEquipmentPhoto(
+  userId: string,
+  equipmentId: string,
+  file: File,
+) {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("Equipment photos must be JPEG, PNG or WebP.");
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("Equipment photo must be 10 MB or smaller.");
+  }
+
+  const extension =
+    file.type === "image/png" ? "png" :
+    file.type === "image/webp" ? "webp" :
+    "jpg";
+
+  const storagePath = `${userId}/${equipmentId}/${crypto.randomUUID()}.${extension}`;
+
+  const { error: uploadError } = await client()
+    .storage
+    .from(EQUIPMENT_BUCKET)
+    .upload(storagePath, file, {
+      contentType: file.type,
+      cacheControl: "3600",
+      upsert: false,
+    });
+
+  if (uploadError) throw new Error(uploadError.message);
+
+  const { error: clearError } = await client()
+    .from(tables.equipmentImages)
+    .update({ is_primary: false })
+    .eq("user_id", userId)
+    .eq("equipment_id", equipmentId)
+    .eq("is_primary", true);
+
+  if (clearError) {
+    await client().storage.from(EQUIPMENT_BUCKET).remove([storagePath]);
+    throw new Error(clearError.message);
+  }
+
+  const { error: metadataError } = await client()
+    .from(tables.equipmentImages)
+    .insert({
+      user_id: userId,
+      equipment_id: equipmentId,
+      storage_path: storagePath,
+      is_primary: true,
+    });
+
+  if (metadataError) {
+    await client().storage.from(EQUIPMENT_BUCKET).remove([storagePath]);
+    throw new Error(metadataError.message);
+  }
+
+  return storagePath;
+}
+
 export async function listEquipmentLibrary(userId: string): Promise<EquipmentLibraryItem[]> {
   const { data: equipmentRows, error: equipmentError } = await client()
     .from(tables.equipment)
@@ -141,14 +204,26 @@ export async function listEquipmentLibrary(userId: string): Promise<EquipmentLib
 
   const equipmentIds = equipmentRows.map((row) => row.id);
 
-  const { data: linkRows, error: linkError } = await client()
-    .from(tables.equipmentExercises)
-    .select("equipment_id,exercise_id,is_primary")
-    .eq("user_id", userId)
-    .in("equipment_id", equipmentIds)
-    .order("is_primary", { ascending: false });
+  const [
+    { data: linkRows, error: linkError },
+    { data: imageRows, error: imageError },
+  ] = await Promise.all([
+    client()
+      .from(tables.equipmentExercises)
+      .select("equipment_id,exercise_id,is_primary")
+      .eq("user_id", userId)
+      .in("equipment_id", equipmentIds)
+      .order("is_primary", { ascending: false }),
+    client()
+      .from(tables.equipmentImages)
+      .select("equipment_id,storage_path")
+      .eq("user_id", userId)
+      .in("equipment_id", equipmentIds)
+      .eq("is_primary", true),
+  ]);
 
   if (linkError) throw new Error(linkError.message);
+  if (imageError) throw new Error(imageError.message);
 
   const exerciseIds = Array.from(new Set((linkRows ?? []).map((row) => row.exercise_id)));
 
@@ -173,9 +248,24 @@ export async function listEquipmentLibrary(userId: string): Promise<EquipmentLib
     });
   }
 
+  const photoUrlByEquipment = new Map<string, string>();
+
+  await Promise.all(
+    (imageRows ?? []).map(async (row) => {
+      const { data, error } = await client()
+        .storage
+        .from(EQUIPMENT_BUCKET)
+        .createSignedUrl(row.storage_path, 3600);
+
+      if (!error && data?.signedUrl) {
+        photoUrlByEquipment.set(row.equipment_id, data.signedUrl);
+      }
+    }),
+  );
+
   const { data: workoutExerciseRows, error: workoutExerciseError } = await client()
     .from(tables.workoutExercises)
-    .select("id,equipment_id")
+    .select("id,equipment_id,workout_id")
     .eq("user_id", userId)
     .in("equipment_id", equipmentIds)
     .limit(1000);
@@ -186,11 +276,14 @@ export async function listEquipmentLibrary(userId: string): Promise<EquipmentLib
   const equipmentByWorkoutExercise = new Map(
     (workoutExerciseRows ?? []).map((row) => [row.id, row.equipment_id as string]),
   );
+  const workoutByWorkoutExercise = new Map(
+    (workoutExerciseRows ?? []).map((row) => [row.id, row.workout_id as string]),
+  );
 
   const { data: setRows, error: setError } = workoutExerciseIds.length
     ? await client()
         .from(tables.sets)
-        .select("id,workout_exercise_id,weight_kg,reps,rir,created_at")
+        .select("id,workout_exercise_id,set_no,weight_kg,reps,rir,created_at")
         .eq("user_id", userId)
         .in("workout_exercise_id", workoutExerciseIds)
         .eq("is_warmup", false)
@@ -212,6 +305,9 @@ export async function listEquipmentLibrary(userId: string): Promise<EquipmentLib
       reps: row.reps,
       rir: row.rir ?? 0,
       createdAt: row.created_at,
+      workoutId: workoutByWorkoutExercise.get(row.workout_exercise_id),
+      workoutExerciseId: row.workout_exercise_id,
+      setNo: row.set_no,
     });
     setsByEquipment.set(equipmentId, list);
   }
@@ -241,6 +337,7 @@ export async function listEquipmentLibrary(userId: string): Promise<EquipmentLib
       estimated1RmKg: estimated.length ? Math.max(...estimated) : 0,
       totalWorkingSets: chronological.length,
       trend1RmKg: estimated.slice(-12),
+      photoUrl: photoUrlByEquipment.get(row.id) ?? null,
     };
   });
 }
@@ -260,7 +357,7 @@ export async function renameEquipment(userId: string, equipmentId: string, nickn
 export async function getActiveWorkout(userId: string): Promise<WorkoutSummary | null> {
   const { data, error } = await client()
     .from(tables.workouts)
-    .select("id,started_at,completed_at")
+    .select("id,started_at,completed_at,notes")
     .eq("user_id", userId)
     .is("completed_at", null)
     .order("started_at", { ascending: false })
@@ -271,15 +368,7 @@ export async function getActiveWorkout(userId: string): Promise<WorkoutSummary |
   if (!data) return null;
 
   const summaries = await summariseWorkoutRows(userId, [data]);
-  return summaries[0] ?? {
-    id: data.id,
-    startedAt: data.started_at,
-    completedAt: data.completed_at,
-    exerciseCount: 0,
-    workingSets: 0,
-    volumeKg: 0,
-    topSet: null,
-  };
+  return summaries[0] ?? emptyWorkoutSummary(data);
 }
 
 export async function startWorkout(userId: string): Promise<WorkoutSummary> {
@@ -289,20 +378,11 @@ export async function startWorkout(userId: string): Promise<WorkoutSummary> {
   const { data, error } = await client()
     .from(tables.workouts)
     .insert({ user_id: userId })
-    .select("id,started_at,completed_at")
+    .select("id,started_at,completed_at,notes")
     .single();
 
   if (error) throw new Error(error.message);
-
-  return {
-    id: data.id,
-    startedAt: data.started_at,
-    completedAt: data.completed_at,
-    exerciseCount: 0,
-    workingSets: 0,
-    volumeKg: 0,
-    topSet: null,
-  };
+  return emptyWorkoutSummary(data);
 }
 
 export async function finishWorkout(userId: string, workoutId: string): Promise<WorkoutSummary> {
@@ -314,27 +394,37 @@ export async function finishWorkout(userId: string, workoutId: string): Promise<
     .eq("user_id", userId)
     .eq("id", workoutId)
     .is("completed_at", null)
-    .select("id,started_at,completed_at")
+    .select("id,started_at,completed_at,notes")
     .single();
 
   if (error) throw new Error(error.message);
 
   const summaries = await summariseWorkoutRows(userId, [data]);
-  return summaries[0] ?? {
-    id: data.id,
-    startedAt: data.started_at,
-    completedAt: data.completed_at,
-    exerciseCount: 0,
-    workingSets: 0,
-    volumeKg: 0,
-    topSet: null,
-  };
+  return summaries[0] ?? emptyWorkoutSummary(data);
+}
+
+export async function saveWorkoutNotes(
+  userId: string,
+  workoutId: string,
+  notes: string,
+) {
+  const clean = notes.trim().slice(0, 4000);
+
+  const { error } = await client()
+    .from(tables.workouts)
+    .update({ notes: clean || null })
+    .eq("user_id", userId)
+    .eq("id", workoutId)
+    .is("completed_at", null);
+
+  if (error) throw new Error(error.message);
+  return clean || null;
 }
 
 export async function listRecentWorkouts(userId: string, limit = 12): Promise<WorkoutSummary[]> {
   const { data: workoutRows, error: workoutError } = await client()
     .from(tables.workouts)
-    .select("id,started_at,completed_at")
+    .select("id,started_at,completed_at,notes")
     .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(limit);
@@ -352,7 +442,7 @@ export async function loadRecentSets(
 ): Promise<TrainingSet[]> {
   const { data: exerciseRows, error: exerciseError } = await client()
     .from(tables.workoutExercises)
-    .select("id")
+    .select("id,workout_id")
     .eq("user_id", userId)
     .eq("equipment_id", equipmentId)
     .limit(100);
@@ -362,9 +452,13 @@ export async function loadRecentSets(
 
   if (ids.length === 0) return [];
 
+  const workoutByExercise = new Map(
+    (exerciseRows ?? []).map((row) => [row.id, row.workout_id as string]),
+  );
+
   const { data, error } = await client()
     .from(tables.sets)
-    .select("id,weight_kg,reps,rir,created_at")
+    .select("id,workout_exercise_id,set_no,weight_kg,reps,rir,created_at")
     .eq("user_id", userId)
     .in("workout_exercise_id", ids)
     .eq("is_warmup", false)
@@ -380,6 +474,9 @@ export async function loadRecentSets(
       reps: row.reps,
       rir: row.rir ?? 0,
       createdAt: row.created_at,
+      workoutId: workoutByExercise.get(row.workout_exercise_id),
+      workoutExerciseId: row.workout_exercise_id,
+      setNo: row.set_no,
     }))
     .reverse();
 }
@@ -446,7 +543,6 @@ export async function saveProgressionRule(
     .eq("id", equipment.id);
 
   if (equipmentError) throw new Error(equipmentError.message);
-
   return clean;
 }
 
@@ -454,7 +550,7 @@ export async function logTrainingSet(
   userId: string,
   workoutId: string,
   equipment: SavedEquipment,
-  values: Omit<TrainingSet, "id" | "createdAt">,
+  values: Omit<TrainingSet, "id" | "createdAt" | "workoutId" | "workoutExerciseId" | "setNo">,
 ) {
   const workoutExerciseId = await ensureWorkoutExercise(
     userId,
@@ -486,7 +582,7 @@ export async function logTrainingSet(
       rir: values.rir,
       is_warmup: false,
     })
-    .select("id,weight_kg,reps,rir,created_at")
+    .select("id,weight_kg,reps,rir,created_at,set_no")
     .single();
 
   if (error) throw new Error(error.message);
@@ -507,8 +603,69 @@ export async function logTrainingSet(
       reps: data.reps,
       rir: data.rir ?? 0,
       createdAt: data.created_at,
+      workoutId,
+      workoutExerciseId,
+      setNo: data.set_no,
     } satisfies TrainingSet,
   };
+}
+
+export async function updateTrainingSet(
+  userId: string,
+  workoutId: string,
+  setId: string,
+  values: { weightKg: number; reps: number; rir: number },
+): Promise<TrainingSet> {
+  const context = await getSetContext(userId, setId);
+
+  if (context.workoutId !== workoutId) {
+    throw new Error("Only sets from the active workout can be edited.");
+  }
+
+  const { data, error } = await client()
+    .from(tables.sets)
+    .update({
+      weight_kg: values.weightKg,
+      reps: values.reps,
+      rir: values.rir,
+    })
+    .eq("user_id", userId)
+    .eq("id", setId)
+    .select("id,weight_kg,reps,rir,created_at,set_no")
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  return {
+    id: data.id,
+    weightKg: Number(data.weight_kg),
+    reps: data.reps,
+    rir: data.rir ?? 0,
+    createdAt: data.created_at,
+    workoutId,
+    workoutExerciseId: context.workoutExerciseId,
+    setNo: data.set_no,
+  };
+}
+
+export async function deleteTrainingSet(
+  userId: string,
+  workoutId: string,
+  setId: string,
+) {
+  const context = await getSetContext(userId, setId);
+
+  if (context.workoutId !== workoutId) {
+    throw new Error("Only sets from the active workout can be deleted.");
+  }
+
+  const { error } = await client()
+    .from(tables.sets)
+    .delete()
+    .eq("user_id", userId)
+    .eq("id", setId);
+
+  if (error) throw new Error(error.message);
 }
 
 export async function saveProgressionRecommendation(
@@ -532,6 +689,31 @@ export async function saveProgressionRecommendation(
     });
 
   if (error) throw new Error(error.message);
+}
+
+async function getSetContext(userId: string, setId: string) {
+  const { data: setRow, error: setError } = await client()
+    .from(tables.sets)
+    .select("workout_exercise_id")
+    .eq("user_id", userId)
+    .eq("id", setId)
+    .single();
+
+  if (setError) throw new Error(setError.message);
+
+  const { data: workoutExercise, error: workoutExerciseError } = await client()
+    .from(tables.workoutExercises)
+    .select("id,workout_id")
+    .eq("user_id", userId)
+    .eq("id", setRow.workout_exercise_id)
+    .single();
+
+  if (workoutExerciseError) throw new Error(workoutExerciseError.message);
+
+  return {
+    workoutId: workoutExercise.workout_id as string,
+    workoutExerciseId: workoutExercise.id as string,
+  };
 }
 
 async function ensureWorkoutExercise(
@@ -579,7 +761,12 @@ async function ensureWorkoutExercise(
 
 async function summariseWorkoutRows(
   userId: string,
-  workoutRows: Array<{ id: string; started_at: string; completed_at: string | null }>,
+  workoutRows: Array<{
+    id: string;
+    started_at: string;
+    completed_at: string | null;
+    notes: string | null;
+  }>,
 ): Promise<WorkoutSummary[]> {
   if (!workoutRows.length) return [];
 
@@ -694,6 +881,7 @@ async function summariseWorkoutRows(
       id: workout.id,
       startedAt: workout.started_at,
       completedAt: workout.completed_at,
+      notes: workout.notes,
       exerciseCount: exerciseCountByWorkout.get(workout.id)?.size ?? 0,
       workingSets: sets.length,
       volumeKg,
@@ -707,6 +895,24 @@ async function summariseWorkoutRows(
         : null,
     };
   });
+}
+
+function emptyWorkoutSummary(workout: {
+  id: string;
+  started_at: string;
+  completed_at: string | null;
+  notes: string | null;
+}): WorkoutSummary {
+  return {
+    id: workout.id,
+    startedAt: workout.started_at,
+    completedAt: workout.completed_at,
+    notes: workout.notes,
+    exerciseCount: 0,
+    workingSets: 0,
+    volumeKg: 0,
+    topSet: null,
+  };
 }
 
 function normaliseProgressionRule(rule: ProgressionRule): ProgressionRule {
