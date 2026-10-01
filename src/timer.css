@@ -1,0 +1,87 @@
+/* One timer language across Train and Move. No animation in reduced-motion mode. */
+:root { --workout-timer-space: 0px; }
+.app-shell { padding-bottom: calc(110px + var(--workout-timer-space) + env(safe-area-inset-bottom, 0px)); }
+.bottom-nav { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+.timer-launcher { min-height: 44px; border: 1px solid var(--line); border-radius: 14px; padding: 0 12px; background: var(--mint); color: #126650; font-weight: 800; }
+.workout-timer-dock { position: fixed; z-index: 60; left: 50%; bottom: calc(94px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(620px, calc(100% - 24px)); border: 1px solid #b0d9cc; border-radius: 20px; background: #f0fbf6; box-shadow: 0 8px 30px #14213d1c; padding: 9px 10px 11px; }
+.timer-dock-controls { display: flex; gap: 6px; align-items: center; }
+.timer-dock-controls button { min-height: 44px; min-width: 44px; padding: 0 9px; border-radius: 12px; background: white; color: #164b41; font-size: .78rem; font-weight: 850; }
+.timer-dock-controls .timer-expand { flex: 1; display: flex; flex-direction: column; align-items: flex-start; min-width: 0; background: transparent; padding: 0 3px; }
+.timer-expand strong { font-size: 1.65rem; font-variant-numeric: tabular-nums; letter-spacing: -.04em; line-height: 1.05; }
+.timer-expand small { font-size: .66rem; }
+.timer-dock-context { display: flex; justify-content: space-between; gap: 8px; padding: 6px 3px; color: #436b60; font-size: .7rem; }
+.timer-dock-context span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.timer-dock-context small { white-space: nowrap; }
+.timer-progress { overflow: hidden; border-radius: 3px; height: 4px; background: #d2e9df; }
+.timer-progress span { display: block; height: 100%; background: var(--teal); transition: width .25s linear; }
+.workout-timer-dock.is-complete { border-color: #83bba6; background: #e5f7ee; }
+.workout-timer-dialog { width: min(480px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); padding: 20px; border: 1px solid var(--line); border-radius: 24px; color: var(--ink); background: #fafffc; overflow-y: auto; overscroll-behavior: contain; box-shadow: 0 20px 70px #12243944; }
+.workout-timer-dialog::backdrop { background: #14213d80; }
+.timer-dialog-heading { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+.timer-dialog-heading h2 { margin: 3px 0; font-size: 1.5rem; line-height: 1.1; letter-spacing: -.04em; }
+.workout-timer-dialog button { min-height: 46px; padding: 8px 12px; border-radius: 13px; background: #e5f5ee; color: #145641; font-weight: 800; }
+.timer-dialog-heading > button { min-width: 44px; flex: none; }
+.timer-active-panel { border: 1px solid #c5e4d7; border-radius: 18px; padding: 16px 12px; background: white; text-align: center; margin-bottom: 16px; }
+.timer-active-panel > span { display: block; color: #436b60; font-size: .85rem; }
+.timer-active-panel > strong { display: block; font-size: clamp(3.5rem, 16vw, 5rem); font-variant-numeric: tabular-nums; line-height: 1.15; letter-spacing: -.05em; }
+.timer-active-panel p { margin: 0 0 12px; color: #436b60; overflow-wrap: anywhere; }
+.timer-active-panel small { display: block; margin-top: 10px; font-size: .73rem; }
+.timer-active-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.timer-active-controls button { flex: 1; min-width: 54px; }
+.timer-kind, .timer-presets, .timer-start-actions { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0,1fr)); }
+.timer-presets { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.workout-timer-dialog button[aria-pressed="true"] { background: #126a55; color: white; }
+.timer-setting-description, .timer-browser-note { font-size: .78rem; color: #556c64; line-height: 1.5; }
+.timer-custom { display: grid; gap: 5px; margin: 14px 0; font-size: .8rem; font-weight: 750; }
+.timer-start-actions { margin-bottom: 14px; }
+.workout-timer-dialog .timer-primary { background: var(--coral); color: #411413; }
+.timer-preferences { margin: 0; padding: 12px 0; border: 0; border-top: 1px solid var(--line); }
+.timer-preferences legend { font-size: .8rem; font-weight: 850; }
+.timer-preferences label { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: .8rem; line-height: 1.4; cursor: pointer; }
+.timer-preferences input { width: 22px; min-height: 22px; height: 22px; flex: none; accent-color: #13755c; }
+.timer-warning { border-radius: 12px; padding: 10px; color: #805c10; background: var(--yellow-soft); font-size: .8rem; }
+.timer-browser-note { margin-bottom: 0; }
+.rest-setting-row { display: grid; gap: 5px; margin-top: 12px; }
+.rest-setting-row small { color: #805c10; }
+.rest-setting-button { min-height: 44px; padding: 8px 12px; border-radius: 13px; text-align: left; color: #145641; background: #edf8f2; font-size: .82rem; font-weight: 800; }
+.timer-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+button:focus-visible, summary:focus-visible { outline: 3px solid #1872b6; outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .timer-progress span { transition: none; } }
+@media (max-width: 360px) { .timer-launcher { padding: 0 9px; } .header-actions { gap: 5px; } .sync-pill { padding: 8px; } .workout-timer-dialog { padding: 16px; } .timer-presets button { padding: 6px; } }
+/* The working screen puts numbers before reports. */
+.train-page .welcome-row h1 { font-size: clamp(1.65rem, 6vw, 2.4rem); }
+.equipment-picker, .session-note-disclosure { border: 1px solid var(--line); background: #ffffffb8; border-radius: 15px; padding: 12px; }
+.equipment-picker > summary, .session-note-disclosure > summary { min-height: 24px; font-size: .82rem; font-weight: 800; cursor: pointer; color: #43647b; overflow-wrap: anywhere; }
+.equipment-picker .machine-card-simple { box-shadow: none; margin-top: 10px; padding: 10px; }
+.quick-log-form .number-control { gap: 4px; }
+.quick-log-form .number-control > span { order: 0; min-height: 28px; }
+.quick-log-form .number-control > input { order: 1; position: static; pointer-events: auto; opacity: 1; width: 100%; min-height: 52px; height: 52px; padding: 0; border-radius: 10px; border: 1px solid transparent; background: #ffffff90; text-align: center; font-size: 1.8rem; font-weight: 850; letter-spacing: -.04em; font-variant-numeric: tabular-nums; appearance: textfield; -moz-appearance: textfield; }
+.quick-log-form .number-control > input::-webkit-inner-spin-button, .quick-log-form .number-control > input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.quick-log-form .number-control > input:focus { border-color: #4784b3; }
+.quick-log-form .number-control > div { order: 2; }
+.quick-log-form .number-control button { min-height: 44px; }
+.last-set-hint { margin: 10px 0 0; color: #556879; font-size: .8rem; }
+.target-details .progressive-card { margin-top: 12px; box-shadow: none; }
+.workout-session-stack > .workout-session-bar { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; padding: 12px; align-items: center; }
+.workout-session-bar .session-live .live-dot { display: none; }
+.workout-session-bar .session-live p { margin: 0 0 2px; }
+.workout-session-bar .session-live strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.workout-session-bar .session-metrics { justify-content: center; padding: 0; border: 0; gap: 14px; }
+.workout-session-bar .finish-button { min-height: 44px; padding: 0 12px; }
+.session-note-disclosure .workout-note { border: 0; background: none; padding: 12px 0 0; }
+@media (max-width: 420px) { .happy-header { flex-wrap: wrap; align-items: center; } .brand-stack { flex: 1 1 175px; } .header-actions { flex: 0 0 auto; } .brand-lockup strong { font-size: 1.55rem; } .brand-stack .omega-brand-mark { width: 26px; height: 26px; } .number-control > span { font-size: .7rem; } }
+.movement-task-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px; align-items: stretch; }
+.movement-task-row:has(> :only-child) { grid-template-columns: 1fr; }
+.movement-task-row .movement-task { width: 100%; min-width: 0; }
+.movement-task-row .movement-task > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
+.movement-time-button { min-width: 60px; min-height: 48px; border: 1px solid #c6e1d6; border-radius: 14px; padding: 10px; background: #e9f8f0; color: #155640; font-size: .8rem; font-weight: 850; }
+.movement-time-button > span { display: block; }
+.movement-check-note { margin: 12px 0 0; font-size: .78rem; color: #586a78; line-height: 1.5; }
+@media (max-width: 520px) {
+  .quick-log-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .quick-log-form .number-control.mint { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,1fr) 60px 108px; align-items: center; gap: 7px; padding: 10px; }
+  .quick-log-form .number-control.mint > span { min-height: auto; }
+  .quick-log-form .number-control.mint > input { font-size: 1.4rem; min-height: 44px; height: 44px; }
+  .quick-log-form .number-control.mint > div { gap: 7px; }
+}
+.quick-log-card .mini-button, .set-edit-row button { min-height: 44px; min-width: 44px; }

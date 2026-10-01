@@ -23,9 +23,9 @@ export function WorkoutSessionBar({
 
   useEffect(() => {
     if (!workout || workout.completedAt) return;
-    const timer = window.setInterval(() => setTick((value) => value + 1), 30_000);
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
     return () => window.clearInterval(timer);
-  }, [workout]);
+  }, [workout?.id, workout?.completedAt]);
 
   useEffect(() => {
     setNote(workout?.notes ?? "");
@@ -52,12 +52,8 @@ export function WorkoutSessionBar({
   }
 
   const elapsed = Math.max(0, Date.now() - new Date(workout.startedAt).getTime());
-  const minutes = Math.floor(elapsed / 60_000);
-  const hours = Math.floor(minutes / 60);
-  const minuteRemainder = minutes % 60;
-  const elapsedLabel = hours
-    ? `${hours}h ${String(minuteRemainder).padStart(2, "0")}m`
-    : `${minutes}m`;
+  const totalSeconds = Math.floor(elapsed / 1000);
+  const elapsedLabel = `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
 
   return (
     <section className="workout-session-stack">
@@ -65,22 +61,22 @@ export function WorkoutSessionBar({
         <div className="session-live">
           <span className="live-dot" aria-hidden="true" />
           <div>
-            <p className="eyebrow">WORKOUT LIVE</p>
+            <p className="eyebrow">SESSION</p>
             <strong>{elapsedLabel}</strong>
           </div>
         </div>
 
         <div className="session-metrics">
-          <Metric label="Exercises" value={String(workout.exerciseCount)} />
-          <Metric label="Working sets" value={String(workout.workingSets)} />
-          <Metric label="Volume" value={workout.volumeKg ? `${Math.round(workout.volumeKg).toLocaleString()} kg` : "0 kg"} />
+          <Metric label="Moves" value={String(workout.exerciseCount)} />
+          <Metric label="Sets" value={String(workout.workingSets)} />
         </div>
 
-        <button type="button" className="finish-button" disabled={busy} onClick={onFinish}>
-          {busy ? "Finishing…" : "Finish workout"}
+        <button type="button" className="finish-button" aria-label="Finish workout" disabled={busy} onClick={onFinish}>
+          {busy ? "Wait…" : "Finish"}
         </button>
       </div>
 
+      <details className="session-note-disclosure"><summary>Workout note (optional)</summary>
       <form className="workout-note" onSubmit={saveNote}>
         <label>
           <span>Workout note</span>
@@ -95,6 +91,7 @@ export function WorkoutSessionBar({
           {noteSaving ? "Saving…" : "Save note"}
         </button>
       </form>
+      </details>
     </section>
   );
 }

@@ -56,7 +56,7 @@ export function EditableSetList({
                 <input
                   type="number"
                   min="0"
-                  step="0.5"
+                  step="0.25"
                   value={draft.weightKg}
                   onChange={(event) => setDraft((current) => ({ ...current, weightKg: Number(event.target.value) }))}
                 />
