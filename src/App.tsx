@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { EditableSetList } from "./components/EditableSetList";
 import { HistoryView } from "./components/HistoryView";
 import { LibraryView } from "./components/LibraryView";
+import { MovementView } from "./components/MovementView";
 import { ProgressionRuleEditor } from "./components/ProgressionRuleEditor";
 import { OmegaBrandMark } from "./components/OmegaBrandMark";
 import { ProgressView } from "./components/ProgressView";
@@ -64,7 +65,7 @@ const defaultRule: ProgressionRule = {
   incrementKg: 2.5,
 };
 
-type AppView = "train" | "progress" | "library" | "routines" | "history";
+type AppView = "train" | "movement" | "progress" | "library" | "routines" | "history";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -771,6 +772,13 @@ export default function App() {
         />
       )}
 
+      {view === "movement" && (
+        <MovementView
+          onOpenGym={() => setView("train")}
+          onOpenRoutines={() => setView("routines")}
+        />
+      )}
+
       {view === "history" && (
         <HistoryView workouts={workouts} loading={memoryLoading} />
       )}
@@ -1045,6 +1053,9 @@ export default function App() {
       <nav className="bottom-nav" aria-label="Primary navigation">
         <button type="button" className={view === "train" ? "active" : ""} onClick={() => setView("train")}>
           <span>🏋️</span><small>Train</small>
+        </button>
+        <button type="button" className={view === "movement" ? "active" : ""} onClick={() => setView("movement")}>
+          <span>🤸</span><small>Move</small>
         </button>
         <button type="button" className={view === "progress" ? "active" : ""} onClick={() => setView("progress")}>
           <span>📈</span><small>Progress</small>
