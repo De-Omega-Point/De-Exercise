@@ -21,7 +21,7 @@ AI proposes equipment identity. It does **not** silently decide training progres
 
 - React + TypeScript + Vite
 - Supabase Auth, Postgres, Storage and Edge Functions
-- OpenAI Responses API for equipment image understanding
+- De-AI Vision for equipment image understanding
 - GitHub as the source of truth
 
 ## Phase 6 — Routines + Session Queue
@@ -105,7 +105,22 @@ npm run dev
 
 Set the public Supabase values in `.env`.
 
-Server secrets such as `OPENAI_API_KEY` belong in Supabase Edge Function secrets, never in browser environment variables.
+Server-side De-AI connection secrets belong in Supabase Edge Function Secrets, never in browser environment variables.
+
+## De-AI
+
+De-Exercise uses the De-Omega-Point AI stack, **De-AI**, for machine-photo recognition.
+
+Runtime path:
+
+`De-Exercise → Supabase recognise-equipment → De-AI Vision Gateway`
+
+Required Supabase Edge Function secrets:
+
+- `DE_AI_VISION_URL`
+- `DE_AI_VISION_TOKEN`
+
+De-Exercise does not depend on a model-vendor API. De-AI owns model routing, schema enforcement, confidence calibration and future exact-machine matching. See `docs/DE_AI.md`.
 
 ## Backend
 
