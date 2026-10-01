@@ -25,9 +25,10 @@ try {
       }
       await nav(page,'Train');
       await page.getByRole('button',{name:'Open training timer'}).click();
+      await page.getByRole('dialog').waitFor({state:'visible'});
       assert.equal(await page.getByRole('dialog').isVisible(),true);
       assert.equal(await page.getByRole('dialog').evaluate(e=>e.scrollWidth>e.clientWidth),false,'Timer dialog overflow');
-      await page.screenshot({path:`${output}/timer-${width}.png`,fullPage:true});
+      await page.screenshot({path:`${output}/timer-${width}.png`});
       await page.keyboard.press('Escape');
       assert.deepEqual(errors,[]);await context.close();
     });
@@ -58,7 +59,13 @@ try {
       const box=await button.boundingBox();assert.ok(box.width>=44 && box.height>=44,JSON.stringify(box));
     }
   });
-  await page.screenshot({path:`${output}/workout-390.png`,fullPage:true});
+  await page.locator('.quick-log-card').evaluate(element=>element.scrollIntoView({block:'start'}));
+  await check('Save control is not covered by the rest timer',async()=>{
+    const save=await page.getByRole('button',{name:'Save set',exact:true}).boundingBox();
+    const dock=await page.locator('.workout-timer-dock').boundingBox();
+    assert.ok(save.y>=0 && save.y+save.height <= dock.y,JSON.stringify({save,dock}));
+  });
+  await page.screenshot({path:`${output}/workout-390.png`});
   await check('Rapid double-submit saves only one additional set',async()=>{
     await page.waitForTimeout(900);
     await page.locator('.quick-log-form').evaluate(form=>{form.requestSubmit();form.requestSubmit();});

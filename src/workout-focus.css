@@ -1,0 +1,14 @@
+/* During a live workout, remove welcome copy rather than adding another screen. */
+.train-page:has(.workout-session-bar.active) > .welcome-row { display: none; }
+.app-shell .brand-lockup strong { white-space: nowrap; }
+.app-shell .workout-session-stack > .workout-session-bar { grid-template-columns: auto minmax(0,1fr) auto auto; gap: 8px; }
+.session-note-toggle { min-height: 44px; min-width: 44px; padding: 0 9px; border-radius: 12px; background: white; color: #375f55; font-size: .78rem; font-weight: 800; }
+.session-note-toggle[aria-expanded="true"] { background: #bff1dc; }
+.workout-session-bar .session-live > div { display: grid; gap: 2px; }
+@media (max-width: 420px) {
+  .app-shell .brand-stack { flex-basis: 148px; }
+  .app-shell .brand-lockup strong { font-size: 1.35rem; }
+  .app-shell .workout-session-bar .session-metrics { gap: 8px; }
+  .app-shell:has(.workout-session-bar.active) > .happy-status { font-size: .78rem; font-weight: 600; padding: 8px 10px; margin-bottom: 10px; }
+}
+@media (max-width: 360px) { .workout-session-bar .session-metrics > div:first-child { display: none; } }

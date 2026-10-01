@@ -1,3 +1,4 @@
+import "../workout-focus.css";
 import { FormEvent, useEffect, useState } from "react";
 import type { WorkoutSummary } from "../lib/types";
 
@@ -20,6 +21,7 @@ export function WorkoutSessionBar({
 }: WorkoutSessionBarProps) {
   const [, setTick] = useState(0);
   const [note, setNote] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
 
   useEffect(() => {
     if (!workout || workout.completedAt) return;
@@ -71,13 +73,13 @@ export function WorkoutSessionBar({
           <Metric label="Sets" value={String(workout.workingSets)} />
         </div>
 
+        <button type="button" className="session-note-toggle" aria-expanded={noteOpen} aria-controls="session-note-form" onClick={() => setNoteOpen(value => !value)}>Note</button>
         <button type="button" className="finish-button" aria-label="Finish workout" disabled={busy} onClick={onFinish}>
           {busy ? "Wait…" : "Finish"}
         </button>
       </div>
 
-      <details className="session-note-disclosure"><summary>Workout note (optional)</summary>
-      <form className="workout-note" onSubmit={saveNote}>
+      {noteOpen && <form id="session-note-form" className="workout-note" onSubmit={saveNote}>
         <label>
           <span>Workout note</span>
           <textarea
@@ -90,8 +92,7 @@ export function WorkoutSessionBar({
         <button type="submit" className="secondary-button compact-button" disabled={noteSaving}>
           {noteSaving ? "Saving…" : "Save note"}
         </button>
-      </form>
-      </details>
+      </form>}
     </section>
   );
 }
