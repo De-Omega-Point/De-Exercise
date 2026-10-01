@@ -4,6 +4,7 @@ import { EditableSetList } from "./components/EditableSetList";
 import { HistoryView } from "./components/HistoryView";
 import { LibraryView } from "./components/LibraryView";
 import { ProgressionRuleEditor } from "./components/ProgressionRuleEditor";
+import { ProgressView } from "./components/ProgressView";
 import { RoutineSessionQueue } from "./components/RoutineSessionQueue";
 import { RoutinesView } from "./components/RoutinesView";
 import { WorkoutSessionBar } from "./components/WorkoutSessionBar";
@@ -62,7 +63,7 @@ const defaultRule: ProgressionRule = {
   incrementKg: 2.5,
 };
 
-type AppView = "train" | "library" | "routines" | "history";
+type AppView = "train" | "progress" | "library" | "routines" | "history";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -711,36 +712,36 @@ export default function App() {
     await supabase.auth.signOut();
   }
 
+  const lastWorkingSet = sets.length ? sets[sets.length - 1] : null;
+  const currentWorkoutSets = activeWorkout
+    ? sets.filter((set) => set.workoutId === activeWorkout.id)
+    : [];
+  const currentExerciseSets = currentWorkoutSets.filter(
+    (set) => !activeEquipment || set.workoutId === activeWorkout?.id,
+  );
+
   return (
-    <main className="shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">DE-EXERCISE / PHASE 6</p>
-          <h1>Plan the session. Follow the queue. Progress every machine.</h1>
-          <p className="subtle">
-            Saved routines turn your machine library into an ordered workout with live exercise completion and one-tap navigation.
-          </p>
+    <main className="app-shell">
+      <header className="happy-header">
+        <div className="brand-lockup">
+          <strong><span>De-</span>Exercise</strong>
+          <small>Progress today. Stronger tomorrow.</small>
         </div>
-        <div className="hero-actions">
-          <div className="status-pill">{isLive ? "Live sync" : "Demo mode"} · kg</div>
-          {isLive && <button type="button" className="secondary-button" onClick={signOut}>Sign out</button>}
+        <div className="header-actions">
+          <span className="sync-pill">{isLive ? "● Synced" : "Demo"}</span>
+          {isLive && (
+            <button type="button" className="icon-button" onClick={signOut} aria-label="Sign out">
+              ↗
+            </button>
+          )}
         </div>
       </header>
 
-      <nav className="app-nav" aria-label="De-Exercise views">
-        <button type="button" className={view === "train" ? "active" : ""} onClick={() => setView("train")}>
-          Train {activeWorkout && <span>●</span>}
-        </button>
-        <button type="button" className={view === "library" ? "active" : ""} onClick={() => setView("library")}>
-          Library <span>{library.length}</span>
-        </button>
-        <button type="button" className={view === "routines" ? "active" : ""} onClick={() => setView("routines")}>
-          Routines <span>{routines.length}</span>
-        </button>
-        <button type="button" className={view === "history" ? "active" : ""} onClick={() => setView("history")}>History</button>
-      </nav>
+      {statusMessage && <div className="happy-status">{statusMessage}</div>}
 
-      {statusMessage && <div className="status-banner">{statusMessage}</div>}
+      {view === "progress" && (
+        <ProgressView equipment={library} workouts={workouts} />
+      )}
 
       {view === "library" && (
         <LibraryView
@@ -767,15 +768,39 @@ export default function App() {
       )}
 
       {view === "train" && (
-        <>
-          <WorkoutSessionBar
-            workout={activeWorkout}
-            busy={sessionBusy}
-            noteSaving={noteSaving}
-            onStart={handleStartWorkout}
-            onFinish={handleFinishWorkout}
-            onSaveNote={handleSaveNote}
-          />
+        <section className="train-page">
+          <div className="welcome-row">
+            <div>
+              <span className="page-kicker">TODAY</span>
+              <h1>Let’s get stronger 💪</h1>
+              <p>One good set at a time.</p>
+            </div>
+            <button type="button" className="soft-button" onClick={() => setView("routines")}>
+              Routines
+            </button>
+          </div>
+
+          {!activeWorkout ? (
+            <article className="start-workout-card">
+              <div>
+                <span>Ready?</span>
+                <strong>Start today’s workout</strong>
+                <small>Your sets, volume and next targets will track automatically.</small>
+              </div>
+              <button type="button" onClick={handleStartWorkout} disabled={sessionBusy}>
+                {sessionBusy ? "Starting…" : "Start workout"}
+              </button>
+            </article>
+          ) : (
+            <WorkoutSessionBar
+              workout={activeWorkout}
+              busy={sessionBusy}
+              noteSaving={noteSaving}
+              onStart={handleStartWorkout}
+              onFinish={handleFinishWorkout}
+              onSaveNote={handleSaveNote}
+            />
+          )}
 
           {completedWorkout && (
             <WorkoutSummaryCard
@@ -793,172 +818,236 @@ export default function App() {
             />
           )}
 
-          <section className="grid two">
-            <article className="card">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">01 / EQUIPMENT</p>
-                  <h2>{activeEquipment ? "Active machine" : "Identify equipment"}</h2>
-                </div>
-                <span className="badge">{activeEquipment ? "Memory loaded" : "AI assisted"}</span>
+          <article className="progressive-card">
+            <div className="progressive-card-top">
+              <div>
+                <span className="page-kicker">↗ PROGRESSIVE OVERLOAD</span>
+                <h2>{activeEquipment ? activeEquipment.exerciseName : "Choose an exercise"}</h2>
+                <p>{activeEquipment?.equipmentType || "Load a saved machine or scan a new one."}</p>
               </div>
+              <button type="button" className="why-pill" onClick={() => setView("progress")}>
+                Progress
+              </button>
+            </div>
 
-              {activeEquipment && (
-                <div className="active-machine active-machine-primary">
-                  <span className="eyebrow">ACTIVE MACHINE</span>
-                  <strong>{activeEquipment.equipmentType}</strong>
-                  <span>{activeEquipment.exerciseName} · {activeRule.targetSets} × {activeRule.repLow}–{activeRule.repHigh}</span>
-                  <button type="button" className="secondary-button" onClick={() => setView("library")}>
-                    Choose another saved machine
-                  </button>
-                </div>
-              )}
+            <div className="target-label">Next target</div>
+            <div className="big-target">
+              <strong>{recommendation.targetWeightKg || weight} kg</strong>
+              <span>·</span>
+              <strong>{activeRule.targetSets} × {recommendation.targetRepLow}–{recommendation.targetRepHigh}</strong>
+            </div>
 
-              <div className="scan-divider">
-                <span>{activeEquipment ? "or scan a new machine" : "scan a new machine"}</span>
+            <div className="last-workout-strip">
+              <div>
+                <span>Last set</span>
+                <strong>
+                  {lastWorkingSet
+                    ? `${lastWorkingSet.weightKg} kg × ${lastWorkingSet.reps}`
+                    : "No history yet"}
+                </strong>
               </div>
+              <div className="positive-copy">
+                {recommendation.action === "increase_load"
+                  ? `↑ +${activeRule.incrementKg} kg`
+                  : recommendation.action === "increase_reps"
+                    ? "↑ Add reps"
+                    : recommendation.action === "reduce_load"
+                      ? "↘ Ease load"
+                      : "→ Hold steady"}
+              </div>
+            </div>
 
-              <label className="upload">
+            <p className="target-explanation">{recommendation.explanation}</p>
+          </article>
+
+          <article className="happy-card machine-card-simple">
+            <div className="section-title-row">
+              <div>
+                <span className="page-kicker">MACHINE</span>
+                <h3>{activeEquipment ? activeEquipment.equipmentType : "Pick your machine"}</h3>
+              </div>
+              {activeEquipment && <span className="success-pill">✓ Ready</span>}
+            </div>
+
+            <div className="machine-shortcuts">
+              <button type="button" className="soft-button" onClick={() => setView("library")}>
+                {activeEquipment ? "Change machine" : "Saved machines"}
+              </button>
+              <label className="scan-button">
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   capture="environment"
                   onChange={(event) => handleImage(event.target.files?.[0])}
                 />
-                <strong>{recognising ? "Analysing…" : "Take or upload a machine photo"}</strong>
-                <span>Saved privately after confirmation · max 10 MB</span>
+                {recognising ? "Scanning…" : "📷 Scan new"}
               </label>
+            </div>
 
-              {recognitionError && <p className="error">{recognitionError}</p>}
+            {recognitionError && <p className="error">{recognitionError}</p>}
 
-              {recognition && (
-                <div className="result">
-                  <div className="result-top">
-                    <div>
-                      <span className="muted">Likely match</span>
-                      <h3>{recognition.equipment_type}</h3>
-                    </div>
-                    <strong>{Math.round(recognition.confidence * 100)}%</strong>
-                  </div>
-
-                  <p className="muted">
-                    {[recognition.manufacturer, recognition.model].filter(Boolean).join(" · ") || "Manufacturer/model not confirmed"}
-                  </p>
-
-                  <div className="chips">
-                    {recognition.likely_exercises.map((item) => <span key={item}>{item}</span>)}
-                  </div>
-
-                  {recognition.confidence < 0.75 && (
-                    <div className="correction">
-                      <div className="warning">
-                        Low-confidence match. Correct the machine label before saving it.
-                      </div>
-                      <label>
-                        <span>Confirmed equipment type</span>
-                        <input
-                          value={manualCorrection}
-                          onChange={(event) => setManualCorrection(event.target.value)}
-                          placeholder="e.g. Hammer Strength ISO-Lateral Chest Press"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  {recognition.candidate_matches.length > 0 && (
-                    <div className="candidate-list">
-                      <span className="muted">Other possibilities</span>
-                      <div className="chips">
-                        {recognition.candidate_matches.map((candidate) => (
-                          <button
-                            type="button"
-                            className="chip-button"
-                            key={candidate.equipment_type + candidate.model}
-                            onClick={() => setManualCorrection(candidate.equipment_type)}
-                          >
-                            {candidate.equipment_type} · {Math.round(candidate.confidence * 100)}%
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <p>{recognition.notes}</p>
-                  <button
-                    type="button"
-                    onClick={confirmEquipment}
-                    disabled={savingEquipment || (recognition.confidence < 0.75 && !manualCorrection.trim())}
-                  >
-                    {savingEquipment ? "Saving…" : "Confirm & save equipment"}
-                  </button>
-                </div>
-              )}
-            </article>
-
-            <article className="card">
-              <div className="section-heading">
+            {recognition && (
+              <div className="recognition-simple">
                 <div>
-                  <p className="eyebrow">02 / WORK SET</p>
-                  <h2>Log training</h2>
+                  <span>AI match · {Math.round(recognition.confidence * 100)}%</span>
+                  <strong>{recognition.equipment_type}</strong>
+                  <small>{recognition.likely_exercises[0] || "Exercise equipment"}</small>
                 </div>
-                <span className="badge">{activeEquipment ? activeEquipment.exerciseName : "Choose machine"}</span>
+
+                {recognition.confidence < 0.75 && (
+                  <input
+                    value={manualCorrection}
+                    onChange={(event) => setManualCorrection(event.target.value)}
+                    placeholder="Correct machine name"
+                  />
+                )}
+
+                <button
+                  type="button"
+                  onClick={confirmEquipment}
+                  disabled={savingEquipment || (recognition.confidence < 0.75 && !manualCorrection.trim())}
+                >
+                  {savingEquipment ? "Saving…" : "Use this machine"}
+                </button>
+              </div>
+            )}
+          </article>
+
+          <article className="happy-card quick-log-card">
+            <div className="section-title-row">
+              <div>
+                <span className="page-kicker">LOG SET</span>
+                <h3>Fast numbers. Big progress.</h3>
+              </div>
+              <span className="set-count-pill">{currentExerciseSets.length} sets today</span>
+            </div>
+
+            <form className="quick-log-form" onSubmit={logSet}>
+              <div className="number-control blue">
+                <span>🏋️ Weight (kg)</span>
+                <strong>{weight}</strong>
+                <div>
+                  <button type="button" onClick={() => setWeight((value) => Math.max(0, Math.round((value - activeRule.incrementKg) * 4) / 4))}>−</button>
+                  <button type="button" onClick={() => setWeight((value) => Math.round((value + activeRule.incrementKg) * 4) / 4)}>+</button>
+                </div>
+                <input
+                  aria-label="Weight in kilograms"
+                  type="number"
+                  min="0"
+                  step="0.25"
+                  value={weight}
+                  onChange={(event) => setWeight(Number(event.target.value))}
+                />
               </div>
 
-              <form className="log-form" onSubmit={logSet}>
-                <label>
-                  <span>Weight (kg)</span>
-                  <input type="number" min="0" step="0.5" value={weight} onChange={(e) => setWeight(Number(e.target.value))} />
-                </label>
-                <label>
-                  <span>Reps</span>
-                  <input type="number" min="1" max="100" value={reps} onChange={(e) => setReps(Number(e.target.value))} />
-                </label>
-                <label>
-                  <span>RIR</span>
-                  <input type="number" min="0" max="10" value={rir} onChange={(e) => setRir(Number(e.target.value))} />
-                </label>
-                <button type="submit" disabled={!activeEquipment || !activeWorkout}>Log set</button>
-              </form>
-
-              {!activeWorkout && (
-                <div className="workout-required">Start a workout above to enable set logging.</div>
-              )}
-
-              <EditableSetList
-                sets={sets}
-                activeWorkoutId={activeWorkout?.id ?? null}
-                busy={setMutating}
-                onUpdate={handleUpdateSet}
-                onUndo={handleUndoSet}
-              />
-            </article>
-          </section>
-
-          <section className="card progression progression-phase4">
-            <div className="progression-copy">
-              <p className="eyebrow">03 / PROGRESSION</p>
-              <h2>Next target</h2>
-              <p className="subtle">{recommendation.explanation}</p>
-
-              {activeEquipment ? (
-                <ProgressionRuleEditor
-                  rule={activeRule}
-                  saving={ruleSaving}
-                  onSave={handleSaveRule}
+              <div className="number-control yellow">
+                <span>↻ Reps</span>
+                <strong>{reps}</strong>
+                <div>
+                  <button type="button" onClick={() => setReps((value) => Math.max(1, value - 1))}>−</button>
+                  <button type="button" onClick={() => setReps((value) => Math.min(100, value + 1))}>+</button>
+                </div>
+                <input
+                  aria-label="Repetitions"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={reps}
+                  onChange={(event) => setReps(Number(event.target.value))}
                 />
-              ) : (
-                <p className="muted">Choose a machine to load its progression rule.</p>
-              )}
+              </div>
+
+              <div className="number-control mint">
+                <span>▮▮ RIR</span>
+                <strong>{rir}</strong>
+                <div>
+                  <button type="button" onClick={() => setRir((value) => Math.max(0, value - 1))}>−</button>
+                  <button type="button" onClick={() => setRir((value) => Math.min(10, value + 1))}>+</button>
+                </div>
+                <input
+                  aria-label="Reps in reserve"
+                  type="number"
+                  min="0"
+                  max="10"
+                  value={rir}
+                  onChange={(event) => setRir(Number(event.target.value))}
+                />
+              </div>
+
+              <button className="save-set-button" type="submit" disabled={!activeEquipment || !activeWorkout}>
+                <span>＋</span> Save Set
+              </button>
+            </form>
+
+            {!activeWorkout && (
+              <div className="gentle-warning">Start a workout first, then your sets will track automatically.</div>
+            )}
+
+            <div className="target-mini">
+              🎯 Target: {recommendation.targetWeightKg || weight} kg · {recommendation.targetRepLow}–{recommendation.targetRepHigh} reps · {activeRule.targetSets} sets
             </div>
 
-            <div className="target">
-              <span>{recommendation.action.replace("_", " ")}</span>
-              <strong>{recommendation.targetWeightKg || weight} kg</strong>
-              <small>{recommendation.targetRepLow}–{recommendation.targetRepHigh} reps</small>
-            </div>
-          </section>
-        </>
+            <EditableSetList
+              sets={sets}
+              activeWorkoutId={activeWorkout?.id ?? null}
+              busy={setMutating}
+              onUpdate={handleUpdateSet}
+              onUndo={handleUndoSet}
+            />
+          </article>
+
+          <div className="train-actions">
+            {activeRoutine && (
+              <button
+                type="button"
+                className="soft-button grow"
+                onClick={() => {
+                  const next = activeRoutine.items.find(
+                    (item) => (routineProgress[item.equipment.id] ?? 0) < item.targetSets
+                      && item.equipment.id !== activeEquipment?.id,
+                  );
+                  if (next) handleRoutineMachineSelect(next.equipment.id);
+                }}
+              >
+                Next machine →
+              </button>
+            )}
+            {activeWorkout && (
+              <button type="button" className="mint-button grow" onClick={handleFinishWorkout}>
+                🏁 Finish workout
+              </button>
+            )}
+          </div>
+
+          <details className="advanced-details">
+            <summary>Progression settings</summary>
+            {activeEquipment ? (
+              <ProgressionRuleEditor
+                rule={activeRule}
+                saving={ruleSaving}
+                onSave={handleSaveRule}
+              />
+            ) : (
+              <p>Choose a machine first.</p>
+            )}
+          </details>
+        </section>
       )}
+
+      <nav className="bottom-nav" aria-label="Primary navigation">
+        <button type="button" className={view === "train" ? "active" : ""} onClick={() => setView("train")}>
+          <span>🏋️</span><small>Train</small>
+        </button>
+        <button type="button" className={view === "progress" ? "active" : ""} onClick={() => setView("progress")}>
+          <span>📈</span><small>Progress</small>
+        </button>
+        <button type="button" className={view === "library" ? "active" : ""} onClick={() => setView("library")}>
+          <span>▦</span><small>Library</small>
+        </button>
+        <button type="button" className={view === "history" ? "active" : ""} onClick={() => setView("history")}>
+          <span>◷</span><small>History</small>
+        </button>
+      </nav>
     </main>
   );
 }
