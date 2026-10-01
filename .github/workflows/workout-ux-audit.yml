@@ -20,7 +20,7 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run build
       - run: npm install --no-save --no-audit --no-fund playwright@1.55.1
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install chromium
       - name: Navigate baseline in isolated demo mode
         shell: bash
         run: |
@@ -38,7 +38,7 @@ jobs:
             page.on('pageerror', error => errors.push(error.message));
             await page.goto('http://127.0.0.1:4173/');
             for (const tab of ['Train', 'Move', 'Progress', 'Library', 'History']) {
-              await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name: tab, exact: true }).click();
+              await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button').filter({hasText:tab}).click();
               await page.screenshot({path: `audit/before-${width}-${tab.toLowerCase()}.png`, fullPage: true});
               results.push({ width, tab, overflow: await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), errors: [...errors] });
             }
@@ -55,7 +55,10 @@ jobs:
           await browser.close();
           JS
       - name: Package isolated source and build tools
-        run: tar --exclude=./audit --exclude=./.git --exclude=./.env --exclude='./.env.local' -czf audit/workspace.tgz .
+        if: always()
+        run: |
+          mkdir -p audit
+          tar --exclude=./audit --exclude=./.git --exclude=./.env --exclude='./.env.local' -czf audit/workspace.tgz .
       - uses: actions/upload-artifact@v4
         if: always()
         with:
