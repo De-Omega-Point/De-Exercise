@@ -6,7 +6,7 @@ De-Exercise has two intelligence layers with different authority.
 
 ### 1. Recognition intelligence
 
-A vision-capable model analyses user-supplied equipment photos and returns a constrained equipment description with confidence and candidate matches.
+**De-AI Vision** analyses user-supplied equipment photos and returns a constrained equipment description with confidence and candidate matches.
 
 The result is advisory. The user confirms or corrects uncertain identity before the machine is saved.
 
@@ -23,7 +23,7 @@ The engine uses:
 - configured rep range
 - equipment load increment
 
-The model is not allowed to silently increase training load.
+De-AI is not allowed to silently increase training load.
 
 ## Runtime
 
@@ -31,6 +31,7 @@ The model is not allowed to silently increase training load.
 
 React/TypeScript handles:
 - camera-friendly image input
+- mobile image compression
 - equipment confirmation
 - workout logging
 - history UI
@@ -45,22 +46,44 @@ Supabase provides:
 - Postgres persistence
 - private equipment-image storage
 - RLS authorization
-- Edge Function for server-side equipment recognition
+- authenticated `recognise-equipment` orchestration
 
-### OpenAI
+The Edge Function does not contain a vendor-specific model client. It validates the request and brokers it to De-AI.
 
-The Edge Function sends the equipment image to the OpenAI Responses API using image input and Structured Outputs.
+### De-AI
 
-The OpenAI API key exists only as a server-side Edge Function secret.
+De-AI is the De-Omega-Point intelligence stack.
+
+For De-Exercise, the relevant capability is:
+
+`gym-equipment-identification.v1`
+
+The De-AI Vision Gateway owns:
+- model selection/routing
+- image understanding
+- structured response enforcement
+- confidence calibration
+- failure/fallback handling
+- gym-equipment taxonomy
+- future same-physical-machine matching
+
+De-Exercise connects using server-only Supabase secrets:
+
+- `DE_AI_VISION_URL`
+- `DE_AI_VISION_TOKEN`
+
+No model-provider credential is exposed to De-Exercise or its browser client.
 
 ## Core workflow
 
 ```
 photo
   ↓
-private upload / image input
+browser compression
   ↓
 recognise-equipment Edge Function
+  ↓
+De-AI Vision Gateway
   ↓
 structured match + confidence
   ↓
@@ -81,6 +104,16 @@ next target + explanation
 - confidence < 0.75: require explicit correction/candidate selection
 - unrelated or unusable image: return unknown/low confidence
 
+## Future exact-machine matching
+
+For maximum progressive-overload fidelity:
+
+1. De-AI identifies the machine family.
+2. De-Exercise supplies candidate saved machines from the user's current gym.
+3. De-AI compares current image evidence against saved photos/metadata.
+4. De-AI proposes the most likely same physical machine.
+5. The user confirms before the machine history is loaded.
+
 ## Security
 
 - RLS enabled on every exposed user-owned table.
@@ -88,4 +121,5 @@ next target + explanation
 - Update policies use both `USING` and `WITH CHECK`.
 - User-id policy columns are indexed.
 - Equipment images live in a private bucket under a per-user folder.
-- No service-role or OpenAI secrets are shipped to the browser.
+- De-AI credentials remain server-side in Supabase Edge Function Secrets.
+- The browser never receives De-AI gateway tokens or model-runtime credentials.
