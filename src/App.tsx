@@ -897,7 +897,7 @@ export default function App() {
             {recognition && (
               <div className="recognition-simple">
                 <div>
-                  <span>AI match · {Math.round(recognition.confidence * 100)}%</span>
+                  <span>De-AI match · {Math.round(recognition.confidence * 100)}%</span>
                   <strong>{recognition.equipment_type}</strong>
                   <small>{recognition.likely_exercises[0] || "Exercise equipment"}</small>
                 </div>
