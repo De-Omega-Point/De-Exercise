@@ -59,7 +59,7 @@ const schema = {
     "confidence",
     "distinguishing_features",
     "notes",
-    "candidate_matches"
+    "candidate_matches",
   ],
   additionalProperties: false,
 };
@@ -70,7 +70,7 @@ Deno.serve(async (req: Request) => {
   }
 
   if (req.method !== "POST") {
-    return json({ error: "Method not allowed." }, 405);
+    return json({ error: "Method not allowed.", code: "METHOD_NOT_ALLOWED" }, 405);
   }
 
   try {
@@ -78,22 +78,34 @@ Deno.serve(async (req: Request) => {
     const imageDataUrl = body.image_data_url;
 
     if (!imageDataUrl || !/^data:image\/(jpeg|png|webp);base64,/.test(imageDataUrl)) {
-      return json({ error: "A JPEG, PNG or WebP image_data_url is required." }, 400);
+      return json({
+        error: "A JPEG, PNG or WebP image is required.",
+        code: "INVALID_IMAGE",
+      }, 400);
     }
 
     if (imageDataUrl.length > 14_000_000) {
-      return json({ error: "Image is too large. Compress it before recognition." }, 413);
+      return json({
+        error: "Image is too large. Compress it before recognition.",
+        code: "IMAGE_TOO_LARGE",
+      }, 413);
     }
 
     const apiKey = Deno.env.get("OPENAI_API_KEY");
+
     if (!apiKey) {
-      return json({ error: "Recognition service is not configured." }, 503);
+      console.error("recognise-equipment configuration error: OPENAI_API_KEY is missing");
+      return json({
+        error: "Recognition service is not configured.",
+        code: "OPENAI_API_KEY_MISSING",
+      }, 503);
     }
 
     const model = Deno.env.get("OPENAI_VISION_MODEL") || "gpt-6-luna";
 
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: {
         "Authorization": "Bearer " + apiKey,
         "Content-Type": "application/json",
@@ -109,11 +121,13 @@ Deno.serve(async (req: Request) => {
               {
                 type: "input_text",
                 text: [
-                  "Identify the gym exercise equipment in this image.",
-                  "Return evidence-based identification only.",
-                  "Do not guess a manufacturer or model without visible evidence.",
-                  "If the image is unclear, unrelated, or multiple machine types are plausible, lower confidence and include candidate_matches.",
-                  "If it is not exercise equipment, use equipment_type 'unknown', confidence 0, empty exercise and muscle arrays, and explain why in notes."
+                  "Identify the gym exercise equipment in this photo.",
+                  "Prioritise the machine family and exercise purpose.",
+                  "Use visible geometry, pads, handles, weight stack or plate horns, cable routing, movement path, labels, logos, and model markings as evidence.",
+                  "Name the manufacturer or model only when it is genuinely supported by visible evidence.",
+                  "Return likely exercises and primary muscles.",
+                  "If several machine identities remain plausible, lower confidence and return the strongest alternatives in candidate_matches.",
+                  "If the image is unclear or not exercise equipment, return equipment_type 'unknown', confidence 0, empty exercise and muscle arrays, and explain why in notes.",
                 ].join(" "),
               },
               {
@@ -138,32 +152,72 @@ Deno.serve(async (req: Request) => {
     if (!response.ok) {
       const message = await response.text();
       console.error("OpenAI recognition failed", response.status, message);
-      return json({ error: "Equipment recognition failed." }, 502);
+
+      if (response.status === 401 || response.status === 403) {
+        return json({
+          error: "Machine recognition could not authenticate with the AI provider.",
+          code: "OPENAI_AUTH_FAILED",
+        }, 502);
+      }
+
+      if (response.status === 429) {
+        return json({
+          error: "Machine recognition is temporarily rate-limited.",
+          code: "OPENAI_RATE_LIMITED",
+        }, 503);
+      }
+
+      return json({
+        error: "Equipment recognition failed.",
+        code: "OPENAI_REQUEST_FAILED",
+      }, 502);
     }
 
     const payload = await response.json() as OpenAIResponse;
     const refusal = extractRefusal(payload);
 
     if (refusal) {
-      return json({ error: "Recognition request was refused.", detail: refusal }, 422);
+      return json({
+        error: "Recognition request was refused.",
+        code: "OPENAI_REFUSAL",
+      }, 422);
     }
 
     const outputText = extractOutputText(payload);
 
     if (!outputText) {
-      return json({ error: "Recognition response was incomplete." }, 502);
+      console.error("OpenAI recognition response contained no output_text");
+      return json({
+        error: "Recognition response was incomplete.",
+        code: "OPENAI_EMPTY_OUTPUT",
+      }, 502);
     }
 
     const result = JSON.parse(outputText);
 
-    if (typeof result.confidence !== "number") {
-      return json({ error: "Recognition response was invalid." }, 502);
+    if (typeof result.confidence !== "number" || typeof result.equipment_type !== "string") {
+      console.error("OpenAI recognition response did not match the expected schema");
+      return json({
+        error: "Recognition response was invalid.",
+        code: "OPENAI_INVALID_OUTPUT",
+      }, 502);
     }
 
     return json(result, 200);
   } catch (error) {
-    console.error(error);
-    return json({ error: "Unexpected recognition error." }, 500);
+    console.error("recognise-equipment unexpected error", error);
+
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      return json({
+        error: "Machine recognition timed out.",
+        code: "OPENAI_TIMEOUT",
+      }, 504);
+    }
+
+    return json({
+      error: "Unexpected recognition error.",
+      code: "UNEXPECTED_RECOGNITION_ERROR",
+    }, 500);
   }
 });
 
@@ -172,6 +226,7 @@ function extractOutputText(payload: OpenAIResponse) {
 
   for (const item of payload.output ?? []) {
     if (item.type !== "message") continue;
+
     for (const part of item.content ?? []) {
       if (part.type === "output_text" && typeof part.text === "string") {
         chunks.push(part.text);
@@ -185,6 +240,7 @@ function extractOutputText(payload: OpenAIResponse) {
 function extractRefusal(payload: OpenAIResponse) {
   for (const item of payload.output ?? []) {
     if (item.type !== "message") continue;
+
     for (const part of item.content ?? []) {
       if (part.type === "refusal" && typeof part.refusal === "string") {
         return part.refusal;
