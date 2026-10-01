@@ -1,0 +1,165 @@
+openapi: 3.1.0
+info:
+  title: De-AI Vision Gateway
+  version: 1.0.0
+  description: Internal De-Omega-Point vision capability contract for De-Exercise.
+paths:
+  /v1/vision/equipment/identify:
+    post:
+      operationId: identifyGymEquipment
+      summary: Identify gym equipment from a photo
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: X-De-AI-Product
+          required: true
+          schema:
+            type: string
+            const: de-exercise
+        - in: header
+          name: X-De-AI-Capability
+          required: true
+          schema:
+            type: string
+            const: gym-equipment-identification.v1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EquipmentIdentificationRequest"
+      responses:
+        "200":
+          description: Equipment identification result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/EquipmentRecognition"
+                  - type: object
+                    required: [result]
+                    properties:
+                      result:
+                        $ref: "#/components/schemas/EquipmentRecognition"
+        "400":
+          description: Invalid image or request
+        "401":
+          description: Invalid De-AI credential
+        "403":
+          description: Product/capability not authorised
+        "429":
+          description: De-AI capacity limit reached
+        "500":
+          description: De-AI internal failure
+        "503":
+          description: De-AI capability unavailable
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    EquipmentIdentificationRequest:
+      type: object
+      required:
+        - capability
+        - image
+        - response_schema
+        - metadata
+      properties:
+        capability:
+          type: string
+          const: gym-equipment-identification.v1
+        image:
+          type: object
+          required: [data_url]
+          properties:
+            data_url:
+              type: string
+              pattern: "^data:image/(jpeg|png|webp);base64,"
+        instruction:
+          type: string
+        response_schema:
+          type: object
+          required: [name, version, schema]
+          properties:
+            name:
+              type: string
+              const: de_exercise_equipment_recognition
+            version:
+              type: string
+              const: "1"
+            schema:
+              type: object
+        metadata:
+          type: object
+          required: [product, purpose]
+          properties:
+            product:
+              type: string
+              const: de-exercise
+            purpose:
+              type: string
+              const: machine-identification
+    Candidate:
+      type: object
+      additionalProperties: false
+      required:
+        - equipment_type
+        - manufacturer
+        - model
+        - confidence
+      properties:
+        equipment_type:
+          type: string
+        manufacturer:
+          type: [string, "null"]
+        model:
+          type: [string, "null"]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+    EquipmentRecognition:
+      type: object
+      additionalProperties: false
+      required:
+        - equipment_type
+        - manufacturer
+        - model
+        - likely_exercises
+        - primary_muscles
+        - confidence
+        - distinguishing_features
+        - notes
+        - candidate_matches
+      properties:
+        equipment_type:
+          type: string
+        manufacturer:
+          type: [string, "null"]
+        model:
+          type: [string, "null"]
+        likely_exercises:
+          type: array
+          items:
+            type: string
+        primary_muscles:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        distinguishing_features:
+          type: array
+          items:
+            type: string
+        notes:
+          type: string
+        candidate_matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/Candidate"
