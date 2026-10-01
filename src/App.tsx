@@ -1,4 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { WorkoutTimer, RestTimerButton } from "./components/WorkoutTimer";
+import { WorkoutTimerStore } from "./lib/workout-timer";
 import type { Session } from "@supabase/supabase-js";
 import { EditableSetList } from "./components/EditableSetList";
 import { HistoryView } from "./components/HistoryView";
@@ -52,12 +54,6 @@ import type {
   WorkoutSummary,
 } from "./lib/types";
 
-const seedSets: TrainingSet[] = [
-  { id: "1", weightKg: 40, reps: 10, rir: 2, workoutId: "history-1", setNo: 1 },
-  { id: "2", weightKg: 40, reps: 10, rir: 2, workoutId: "history-1", setNo: 2 },
-  { id: "3", weightKg: 40, reps: 9, rir: 1, workoutId: "history-1", setNo: 3 },
-];
-
 const defaultRule: ProgressionRule = {
   repLow: 8,
   repHigh: 12,
@@ -86,14 +82,20 @@ export default function App() {
   const [ruleSaving, setRuleSaving] = useState(false);
   const [recognitionError, setRecognitionError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
-  const [sets, setSets] = useState<TrainingSet[]>(isSupabaseConfigured ? [] : seedSets);
+  const [sets, setSets] = useState<TrainingSet[]>([]);
   const [library, setLibrary] = useState<EquipmentLibraryItem[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [activeRoutine, setActiveRoutine] = useState<Routine | null>(null);
   const [routineProgress, setRoutineProgress] = useState<RoutineProgress>({});
   const [workouts, setWorkouts] = useState<WorkoutSummary[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
-  const [weight, setWeight] = useState(40);
+  const [weight, setWeight] = useState(0);
+  const [setLogging, setSetLogging] = useState(false);
+  const saveLock = useRef(false);
+  const lastSavedAt = useRef(0);
+  const [timerOpenRequest, setTimerOpenRequest] = useState(0);
+  const timerScope = session?.user.id ?? "demo";
+  const timer = useMemo(() => new WorkoutTimerStore(timerScope), [timerScope]);
   const [reps, setReps] = useState(10);
   const [rir, setRir] = useState(2);
 
@@ -304,7 +306,10 @@ export default function App() {
       setPendingPhoto(null);
 
       if (recentSets.length) {
-        setWeight(recentSets[recentSets.length - 1].weightKg);
+        const last = recentSets[recentSets.length - 1];
+        setWeight(last.weightKg);
+        setReps(last.reps);
+        setRir(last.rir);
       }
 
       await refreshMemory();
@@ -332,7 +337,10 @@ export default function App() {
       setPendingPhoto(null);
 
       if (recentSets.length) {
-        setWeight(recentSets[recentSets.length - 1].weightKg);
+        const last = recentSets[recentSets.length - 1];
+        setWeight(last.weightKg);
+        setReps(last.reps);
+        setRir(last.rir);
       }
 
       setRecognition(null);
@@ -366,7 +374,7 @@ export default function App() {
     try {
       if (!isLive || !userId) {
         setActiveWorkout({
-          id: "demo-workout",
+          id: crypto.randomUUID(),
           startedAt: new Date().toISOString(),
           completedAt: null,
           notes: null,
@@ -391,7 +399,8 @@ export default function App() {
   }
 
   async function handleFinishWorkout() {
-    if (!activeWorkout) return;
+    if (!activeWorkout || saveLock.current || setMutating) return;
+    if (!window.confirm(`Finish this workout with ${activeWorkout.workingSets} saved sets?`)) return;
 
     setSessionBusy(true);
     setStatusMessage("");
@@ -414,6 +423,7 @@ export default function App() {
               }
             : null,
         };
+        timer.cancelForWorkout(activeWorkout.id);
         setCompletedWorkout(finished);
         setActiveWorkout(null);
         setActiveRoutine(null);
@@ -423,6 +433,7 @@ export default function App() {
       }
 
       const finished = await finishWorkout(userId, activeWorkout.id);
+      timer.cancelForWorkout(activeWorkout.id);
       setCompletedWorkout(finished);
       setActiveWorkout(null);
       setActiveRoutine(null);
@@ -493,6 +504,7 @@ export default function App() {
 
   async function logSet(event: FormEvent) {
     event.preventDefault();
+    if (saveLock.current || sessionBusy || setMutating || Date.now() - lastSavedAt.current < 800) return;
 
     if (!activeWorkout) {
       setStatusMessage("Start a workout before logging working sets.");
@@ -510,6 +522,8 @@ export default function App() {
     }
 
     const values = cleanSetValues(weight, reps, rir);
+    saveLock.current = true;
+    setSetLogging(true);
 
     try {
       if (!isLive || !userId) {
@@ -528,7 +542,9 @@ export default function App() {
           workingSets: activeWorkout.workingSets + 1,
           volumeKg: activeWorkout.volumeKg + values.weightKg * values.reps,
         });
-        setStatusMessage("Demo set logged locally.");
+        lastSavedAt.current = Date.now();
+        timer.afterSetSaved(activeWorkout.id, activeEquipment.id, demoSet.id, activeEquipment.exerciseName);
+        setStatusMessage("Demo set saved in this session. Rest timer started when enabled.");
         return;
       }
 
@@ -536,11 +552,20 @@ export default function App() {
       const nextSets = [...sets, persisted.set];
       setSets(nextSets);
 
-      await persistRecalculatedRecommendation(userId, activeWorkout.id, activeEquipment, nextSets);
-      await refreshMemory();
-      setStatusMessage("Set saved. Session totals and next target are updated.");
+      lastSavedAt.current = Date.now();
+      timer.afterSetSaved(activeWorkout.id, activeEquipment.id, persisted.set.id, activeEquipment.exerciseName);
+      try {
+        await persistRecalculatedRecommendation(userId, activeWorkout.id, activeEquipment, nextSets);
+        await refreshMemory();
+        setStatusMessage("Set saved. Session totals and next target are updated.");
+      } catch {
+        setStatusMessage("Set saved successfully. Some summaries could not refresh. Do not save the same set again.");
+      }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Could not save set.");
+    } finally {
+      saveLock.current = false;
+      setSetLogging(false);
     }
   }
 
@@ -593,11 +618,13 @@ export default function App() {
         const nextSets = sets.filter((item) => item.id !== set.id);
         setSets(nextSets);
         recalculateDemoWorkout(nextSets);
+        timer.cancelForSet(set.id);
         setStatusMessage("Last demo set undone.");
         return;
       }
 
       await deleteTrainingSet(userId, activeWorkout.id, set.id);
+      timer.cancelForSet(set.id);
       const nextSets = sets.filter((item) => item.id !== set.id);
       setSets(nextSets);
 
@@ -737,7 +764,8 @@ export default function App() {
           </div>
         </div>
         <div className="header-actions">
-          <span className="sync-pill">{isLive ? "● Synced" : "Demo"}</span>
+          <button type="button" className="timer-launcher" onClick={() => setTimerOpenRequest(value => value + 1)} aria-label="Open training timer">⏱ Timer</button>
+          <span className="sync-pill">{isLive ? "Account" : "Demo"}</span>
           {isLive && (
             <button type="button" className="icon-button" onClick={signOut} aria-label="Sign out">
               ↗
@@ -746,7 +774,7 @@ export default function App() {
         </div>
       </header>
 
-      {statusMessage && <div className="happy-status">{statusMessage}</div>}
+      {statusMessage && <div className="happy-status" role="status">{statusMessage}</div>}
 
       {view === "progress" && (
         <ProgressView equipment={library} workouts={workouts} />
@@ -774,6 +802,13 @@ export default function App() {
 
       {view === "movement" && (
         <MovementView
+          key={timerScope}
+          userScope={timerScope}
+          onStartTimer={(seconds, label) => {
+            const current = timer.getSnapshot().active;
+            if (current && current.status !== "complete" && !window.confirm("Replace the current timer?")) return;
+            timer.start(seconds, label, "hold", activeWorkout?.id ?? null);
+          }}
           onOpenGym={() => setView("train")}
           onOpenRoutines={() => setView("routines")}
         />
@@ -788,8 +823,8 @@ export default function App() {
           <div className="welcome-row">
             <div>
               <span className="page-kicker">TODAY</span>
-              <h1>Let’s get stronger 💪</h1>
-              <p>One good set at a time.</p>
+              <h1>Today’s training</h1>
+              <p>{activeWorkout ? "One set. One tap. Back to training." : "Choose a routine or start a workout."}</p>
             </div>
             <button type="button" className="soft-button" onClick={() => setView("routines")}>
               Routines
@@ -810,7 +845,7 @@ export default function App() {
           ) : (
             <WorkoutSessionBar
               workout={activeWorkout}
-              busy={sessionBusy}
+              busy={sessionBusy || setLogging || setMutating}
               noteSaving={noteSaving}
               onStart={handleStartWorkout}
               onFinish={handleFinishWorkout}
@@ -834,48 +869,10 @@ export default function App() {
             />
           )}
 
-          <article className="progressive-card">
-            <div className="progressive-card-top">
-              <div>
-                <span className="page-kicker">↗ PROGRESSIVE OVERLOAD</span>
-                <h2>{activeEquipment ? activeEquipment.exerciseName : "Choose an exercise"}</h2>
-                <p>{activeEquipment?.equipmentType || "Load a saved machine or scan a new one."}</p>
-              </div>
-              <button type="button" className="why-pill" onClick={() => setView("progress")}>
-                Progress
-              </button>
-            </div>
 
-            <div className="target-label">Next target</div>
-            <div className="big-target">
-              <strong>{recommendation.targetWeightKg || weight} kg</strong>
-              <span>·</span>
-              <strong>{activeRule.targetSets} × {recommendation.targetRepLow}–{recommendation.targetRepHigh}</strong>
-            </div>
 
-            <div className="last-workout-strip">
-              <div>
-                <span>Last set</span>
-                <strong>
-                  {lastWorkingSet
-                    ? `${lastWorkingSet.weightKg} kg × ${lastWorkingSet.reps}`
-                    : "No history yet"}
-                </strong>
-              </div>
-              <div className="positive-copy">
-                {recommendation.action === "increase_load"
-                  ? `↑ +${activeRule.incrementKg} kg`
-                  : recommendation.action === "increase_reps"
-                    ? "↑ Add reps"
-                    : recommendation.action === "reduce_load"
-                      ? "↘ Ease load"
-                      : "→ Hold steady"}
-              </div>
-            </div>
-
-            <p className="target-explanation">{recommendation.explanation}</p>
-          </article>
-
+          <details className="equipment-picker" open={!activeEquipment}>
+            <summary>{activeEquipment ? `Change equipment: ${activeEquipment.equipmentType}` : "Choose or scan equipment"}</summary>
           <article className="happy-card machine-card-simple">
             <div className="section-title-row">
               <div>
@@ -929,25 +926,29 @@ export default function App() {
             )}
           </article>
 
+          </details>
           <article className="happy-card quick-log-card">
             <div className="section-title-row">
               <div>
                 <span className="page-kicker">LOG SET</span>
-                <h3>Fast numbers. Big progress.</h3>
+                <h3>{activeEquipment?.exerciseName || "Choose an exercise to log"}</h3>
               </div>
               <span className="set-count-pill">{currentExerciseSets.length} sets today</span>
             </div>
 
+            {activeEquipment && lastWorkingSet && <p className="last-set-hint">Last recorded: {lastWorkingSet.weightKg} kg × {lastWorkingSet.reps} · {lastWorkingSet.rir} reps left</p>}
+            <RestTimerButton store={timer} exerciseId={activeEquipment?.id ?? null} onOpen={() => setTimerOpenRequest(value => value + 1)} />
             <form className="quick-log-form" onSubmit={logSet}>
               <div className="number-control blue">
                 <span>🏋️ Weight (kg)</span>
-                <strong>{weight}</strong>
+
                 <div>
-                  <button type="button" onClick={() => setWeight((value) => Math.max(0, Math.round((value - activeRule.incrementKg) * 4) / 4))}>−</button>
-                  <button type="button" onClick={() => setWeight((value) => Math.round((value + activeRule.incrementKg) * 4) / 4)}>+</button>
+                  <button type="button" aria-label="Decrease weight" onClick={() => setWeight((value) => Math.max(0, Math.round((value - activeRule.incrementKg) * 4) / 4))}>−</button>
+                  <button type="button" aria-label="Increase weight" onClick={() => setWeight((value) => Math.round((value + activeRule.incrementKg) * 4) / 4)}>+</button>
                 </div>
                 <input
                   aria-label="Weight in kilograms"
+                  inputMode="decimal"
                   type="number"
                   min="0"
                   step="0.25"
@@ -958,13 +959,14 @@ export default function App() {
 
               <div className="number-control yellow">
                 <span>↻ Reps</span>
-                <strong>{reps}</strong>
+
                 <div>
-                  <button type="button" onClick={() => setReps((value) => Math.max(1, value - 1))}>−</button>
-                  <button type="button" onClick={() => setReps((value) => Math.min(100, value + 1))}>+</button>
+                  <button type="button" aria-label="Decrease reps" onClick={() => setReps((value) => Math.max(1, value - 1))}>−</button>
+                  <button type="button" aria-label="Increase reps" onClick={() => setReps((value) => Math.min(100, value + 1))}>+</button>
                 </div>
                 <input
                   aria-label="Repetitions"
+                  inputMode="numeric"
                   type="number"
                   min="1"
                   max="100"
@@ -974,14 +976,15 @@ export default function App() {
               </div>
 
               <div className="number-control mint">
-                <span>▮▮ RIR</span>
-                <strong>{rir}</strong>
+                <span>Reps left</span>
+
                 <div>
-                  <button type="button" onClick={() => setRir((value) => Math.max(0, value - 1))}>−</button>
-                  <button type="button" onClick={() => setRir((value) => Math.min(10, value + 1))}>+</button>
+                  <button type="button" aria-label="Decrease reps left" onClick={() => setRir((value) => Math.max(0, value - 1))}>−</button>
+                  <button type="button" aria-label="Increase reps left" onClick={() => setRir((value) => Math.min(10, value + 1))}>+</button>
                 </div>
                 <input
                   aria-label="Reps in reserve"
+                  inputMode="numeric"
                   type="number"
                   min="0"
                   max="10"
@@ -990,8 +993,8 @@ export default function App() {
                 />
               </div>
 
-              <button className="save-set-button" type="submit" disabled={!activeEquipment || !activeWorkout}>
-                <span>＋</span> Save Set
+              <button className="save-set-button" type="submit" disabled={!activeEquipment || !activeWorkout || setLogging || sessionBusy || setMutating}>
+                <span aria-hidden="true">＋</span> {setLogging ? "Saving…" : "Save set"}
               </button>
             </form>
 
@@ -1006,7 +1009,7 @@ export default function App() {
             <EditableSetList
               sets={sets}
               activeWorkoutId={activeWorkout?.id ?? null}
-              busy={setMutating}
+                busy={setMutating || setLogging}
               onUpdate={handleUpdateSet}
               onUndo={handleUndoSet}
             />
@@ -1029,11 +1032,56 @@ export default function App() {
               </button>
             )}
             {activeWorkout && (
-              <button type="button" className="mint-button grow" onClick={handleFinishWorkout}>
+              <button type="button" className="mint-button grow" disabled={sessionBusy || setLogging} onClick={handleFinishWorkout}>
                 🏁 Finish workout
               </button>
             )}
           </div>
+
+          <details className="advanced-details target-details">
+            <summary>Next target and progression</summary>
+          <article className="progressive-card">
+            <div className="progressive-card-top">
+              <div>
+                <span className="page-kicker">↗ PROGRESSIVE OVERLOAD</span>
+                <h2>{activeEquipment ? activeEquipment.exerciseName : "Choose an exercise"}</h2>
+                <p>{activeEquipment?.equipmentType || "Load a saved machine or scan a new one."}</p>
+              </div>
+              <button type="button" className="why-pill" onClick={() => setView("progress")}>
+                Progress
+              </button>
+            </div>
+
+            <div className="target-label">Next target</div>
+            <div className="big-target">
+              <strong>{recommendation.targetWeightKg || weight} kg</strong>
+              <span>·</span>
+              <strong>{activeRule.targetSets} × {recommendation.targetRepLow}–{recommendation.targetRepHigh}</strong>
+            </div>
+
+            <div className="last-workout-strip">
+              <div>
+                <span>Last set</span>
+                <strong>
+                  {lastWorkingSet
+                    ? `${lastWorkingSet.weightKg} kg × ${lastWorkingSet.reps}`
+                    : "No history yet"}
+                </strong>
+              </div>
+              <div className="positive-copy">
+                {recommendation.action === "increase_load"
+                  ? `↑ +${activeRule.incrementKg} kg`
+                  : recommendation.action === "increase_reps"
+                    ? "↑ Add reps"
+                    : recommendation.action === "reduce_load"
+                      ? "↘ Ease load"
+                      : "→ Hold steady"}
+              </div>
+            </div>
+
+            <p className="target-explanation">{recommendation.explanation}</p>
+          </article>
+          </details>
 
           <details className="advanced-details">
             <summary>Progression settings</summary>
@@ -1050,21 +1098,29 @@ export default function App() {
         </section>
       )}
 
+      <WorkoutTimer
+        key={timerScope}
+        store={timer}
+        openRequest={timerOpenRequest}
+        exerciseId={activeEquipment?.id ?? null}
+        exerciseLabel={activeEquipment?.exerciseName ?? "Your next set"}
+        workoutId={activeWorkout?.id ?? null}
+      />
       <nav className="bottom-nav" aria-label="Primary navigation">
         <button type="button" className={view === "train" ? "active" : ""} onClick={() => setView("train")}>
-          <span>🏋️</span><small>Train</small>
+          <span aria-hidden="true">🏋️</span><small>Train</small>
         </button>
         <button type="button" className={view === "movement" ? "active" : ""} onClick={() => setView("movement")}>
-          <span>🤸</span><small>Move</small>
+          <span aria-hidden="true">🤸</span><small>Move</small>
         </button>
         <button type="button" className={view === "progress" ? "active" : ""} onClick={() => setView("progress")}>
-          <span>📈</span><small>Progress</small>
+          <span aria-hidden="true">📈</span><small>Progress</small>
         </button>
         <button type="button" className={view === "library" ? "active" : ""} onClick={() => setView("library")}>
-          <span>▦</span><small>Library</small>
+          <span aria-hidden="true">▦</span><small>Library</small>
         </button>
         <button type="button" className={view === "history" ? "active" : ""} onClick={() => setView("history")}>
-          <span>◷</span><small>History</small>
+          <span aria-hidden="true">◷</span><small>History</small>
         </button>
       </nav>
     </main>
@@ -1076,6 +1132,8 @@ function validSetValues(weightKg: number, reps: number, rir: number) {
     && Number.isFinite(reps)
     && Number.isFinite(rir)
     && weightKg >= 0
+    && Number.isInteger(reps)
+    && Number.isInteger(rir)
     && reps >= 1
     && reps <= 100
     && rir >= 0
@@ -1084,7 +1142,7 @@ function validSetValues(weightKg: number, reps: number, rir: number) {
 
 function cleanSetValues(weightKg: number, reps: number, rir: number) {
   return {
-    weightKg: Math.round(weightKg * 2) / 2,
+    weightKg: Math.round(weightKg * 4) / 4,
     reps: Math.round(reps),
     rir: Math.round(rir),
   };

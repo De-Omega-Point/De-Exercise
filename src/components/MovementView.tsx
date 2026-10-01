@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { dailyBaseline, eveningReset, movementWeek, type MovementPrescription } from "../lib/movement-program";
 
 type MovementViewProps = {
+  userScope: string;
+  onStartTimer: (seconds: number, label: string) => void;
   onOpenGym: () => void;
   onOpenRoutines: () => void;
 };
@@ -37,18 +39,30 @@ function todayIndex() {
   return day === 0 ? 6 : day - 1;
 }
 
-function loadCompletions(): CompletionStore {
+function loadCompletions(key: string): { data: CompletionStore; warning: string } {
   try {
-    const raw = localStorage.getItem("de-exercise:movement-completions:v1");
-    return raw ? JSON.parse(raw) as CompletionStore : {};
+    const raw = localStorage.getItem(key);
+    if (!raw) return { data: {}, warning: "" };
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid data");
+    const data: CompletionStore = {};
+    for (const [date, ids] of Object.entries(value)) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date) && Array.isArray(ids))
+        data[date] = ids.filter((id): id is string => typeof id === "string" && id.length < 120).slice(0, 200);
+    }
+    return { data, warning: "" };
   } catch {
-    return {};
+    return { data: {}, warning: "Saved checks could not be loaded. Your gym history is unchanged." };
   }
 }
 
-export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
+export function MovementView({ userScope, onStartTimer, onOpenGym, onOpenRoutines }: MovementViewProps) {
   const [selectedIndex, setSelectedIndex] = useState(todayIndex);
-  const [completionStore, setCompletionStore] = useState<CompletionStore>(loadCompletions);
+  const storageKey = `de-exercise:movement-completions:v2:${encodeURIComponent(userScope)}`;
+  const [initial] = useState(() => loadCompletions(storageKey));
+  const [completionStore, setCompletionStore] = useState<CompletionStore>(initial.data);
+  const completionRef = useRef(completionStore);
+  const [storageWarning, setStorageWarning] = useState(initial.warning);
   const day = movementWeek[selectedIndex];
   const dateKey = selectedDateKey(selectedIndex);
   const completed = useMemo(() => new Set(completionStore[dateKey] ?? []), [completionStore, dateKey]);
@@ -64,15 +78,19 @@ export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
   const progress = taskIds.length ? Math.round((completeCount / taskIds.length) * 100) : 0;
 
   function toggle(id: string) {
-    setCompletionStore((current) => {
-      const nextForDay = new Set(current[dateKey] ?? []);
-      if (nextForDay.has(id)) nextForDay.delete(id);
-      else nextForDay.add(id);
-
-      const next = { ...current, [dateKey]: [...nextForDay] };
-      localStorage.setItem("de-exercise:movement-completions:v1", JSON.stringify(next));
-      return next;
-    });
+    const current = completionRef.current;
+    const nextForDay = new Set(current[dateKey] ?? []);
+    if (nextForDay.has(id)) nextForDay.delete(id);
+    else nextForDay.add(id);
+    const next = { ...current, [dateKey]: [...nextForDay] };
+    completionRef.current = next;
+    setCompletionStore(next);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      setStorageWarning("");
+    } catch {
+      setStorageWarning("Checks are kept in this tab, but could not be saved on this device. A refresh may lose them.");
+    }
   }
 
   return (
@@ -85,16 +103,15 @@ export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
         </div>
         <div className="movement-progress-orb" aria-label={`${progress}% complete`}>
           <strong>{progress}%</strong>
-          <small>today</small>
+          <small>{day.day}</small>
         </div>
       </div>
 
-      <div className="movement-week-tabs" role="tablist" aria-label="Movement week">
+      <div className="movement-week-tabs" role="group" aria-label="Movement week">
         {movementWeek.map((item, index) => (
           <button
             type="button"
-            role="tab"
-            aria-selected={selectedIndex === index}
+            aria-pressed={selectedIndex === index}
             className={selectedIndex === index ? "active" : ""}
             key={item.id}
             onClick={() => setSelectedIndex(index)}
@@ -112,13 +129,15 @@ export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
             <h2>{day.theme}</h2>
             <p><strong>{day.gymFocus}</strong> + {day.movementFocus}</p>
           </div>
-          <span className="movement-local-pill">Local-first ✓</span>
+          <span className="movement-local-pill">{storageWarning ? "This tab only" : "Device storage"}</span>
         </div>
 
         <div className="movement-progress-track" aria-hidden="true">
           <span style={{ width: `${progress}%` }} />
         </div>
 
+        <p className="movement-check-note">Plan check-offs only. Record weights and reps in Train. A timer does not mark an exercise complete.</p>
+        {storageWarning && <p className="movement-note" role="status">{storageWarning}</p>}
         {day.note && <p className="movement-note">{day.note}</p>}
       </article>
 
@@ -130,6 +149,7 @@ export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
         prefix="baseline"
         completed={completed}
         onToggle={toggle}
+        onStartTimer={onStartTimer}
       />
 
       <MovementBlock
@@ -140,6 +160,7 @@ export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
         prefix="gym"
         completed={completed}
         onToggle={toggle}
+        onStartTimer={onStartTimer}
         emptyCopy="Recovery day. No loaded strength block."
         action={day.gym.length ? (
           <button type="button" className="movement-primary-action" onClick={onOpenGym}>Open gym tracker →</button>
@@ -154,6 +175,7 @@ export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
         prefix="movement"
         completed={completed}
         onToggle={toggle}
+        onStartTimer={onStartTimer}
       />
 
       <MovementBlock
@@ -164,6 +186,7 @@ export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
         prefix="evening"
         completed={completed}
         onToggle={toggle}
+        onStartTimer={onStartTimer}
       />
 
       <article className="movement-flow-card">
@@ -172,6 +195,7 @@ export function MovementView({ onOpenGym, onOpenRoutines }: MovementViewProps) {
         <p>Do not chase speed. Chase clean transitions. When the sequence becomes easy, add range, duration or complexity one variable at a time.</p>
       </article>
 
+      <p className="movement-check-note">Use a comfortable, pain-free range. Rolls, cartwheels and inversions need suitable space, a mat and appropriate coaching. Skip any movement you cannot perform safely.</p>
       <div className="movement-actions">
         <button type="button" className="soft-button" onClick={onOpenRoutines}>Saved gym routines</button>
         <button type="button" className="movement-primary-action" onClick={onOpenGym}>Train now</button>
@@ -188,6 +212,7 @@ type MovementBlockProps = {
   prefix: string;
   completed: Set<string>;
   onToggle: (id: string) => void;
+  onStartTimer: (seconds: number, label: string) => void;
   emptyCopy?: string;
   action?: ReactNode;
 };
@@ -200,6 +225,7 @@ function MovementBlock({
   prefix,
   completed,
   onToggle,
+  onStartTimer,
   emptyCopy,
   action,
 }: MovementBlockProps) {
@@ -220,10 +246,10 @@ function MovementBlock({
             const id = `${prefix}-${index}`;
             const done = completed.has(id);
             return (
+              <div className="movement-task-row" key={id}>
               <button
                 type="button"
                 className={`movement-task ${done ? "complete" : ""}`}
-                key={id}
                 onClick={() => onToggle(id)}
                 aria-pressed={done}
               >
@@ -234,6 +260,12 @@ function MovementBlock({
                 </span>
                 <em>{item.dose}</em>
               </button>
+              {item.timerSeconds && <button type="button" className="movement-time-button"
+                aria-label={`Time ${item.name}, ${item.timerSeconds} seconds${item.timerHint ? ", " + item.timerHint : ""}`}
+                onClick={() => onStartTimer(item.timerSeconds!, `${item.name}${item.timerHint ? " · " + item.timerHint : ""}`)}>
+                <span aria-hidden="true">⏱</span> {item.timerSeconds}s
+              </button>}
+              </div>
             );
           })}
         </div>
