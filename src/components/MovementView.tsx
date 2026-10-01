@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { dailyBaseline, eveningReset, movementWeek, type MovementPrescription } from "../lib/movement-program";
 
 type MovementViewProps = {
@@ -188,7 +189,7 @@ type MovementBlockProps = {
   completed: Set<string>;
   onToggle: (id: string) => void;
   emptyCopy?: string;
-  action?: React.ReactNode;
+  action?: ReactNode;
 };
 
 function MovementBlock({
