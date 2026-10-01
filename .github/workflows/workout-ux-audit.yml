@@ -1,0 +1,64 @@
+name: Workout UX audit
+on:
+  push:
+    branches: [feature/workout-timer-ux]
+    paths: [.github/workflows/workout-ux-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+      - run: npm install --no-save --no-audit --no-fund playwright@1.55.1
+      - run: npx playwright install --with-deps chromium
+      - name: Navigate baseline in isolated demo mode
+        shell: bash
+        run: |
+          mkdir -p audit
+          npm run dev -- --host 127.0.0.1 --port 4173 > /tmp/de-exercise-vite.log 2>&1 &
+          node --input-type=module <<'JS'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs';
+          const browser = await chromium.launch();
+          const results = [];
+          for (const width of [320, 390, 768, 1440]) {
+            const context = await browser.newContext({ viewport: { width, height: 844 }, reducedMotion: 'reduce' });
+            const page = await context.newPage();
+            const errors = [];
+            page.on('pageerror', error => errors.push(error.message));
+            await page.goto('http://127.0.0.1:4173/');
+            for (const tab of ['Train', 'Move', 'Progress', 'Library', 'History']) {
+              await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name: tab, exact: true }).click();
+              await page.screenshot({path: `audit/before-${width}-${tab.toLowerCase()}.png`, fullPage: true});
+              results.push({ width, tab, overflow: await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), errors: [...errors] });
+            }
+            await context.close();
+          }
+          const live = await browser.newPage();
+          try {
+            const response = await live.goto('https://de-omega-point.github.io/De-Exercise/', { waitUntil: 'networkidle', timeout: 30000 });
+            results.push({production: { status: response.status(), title: await live.title(), signInVisible: await live.getByRole('button', {name:'Sign in', exact: true}).first().isVisible() }});
+            await live.screenshot({path:'audit/production-entry.png', fullPage:true});
+          } catch(error) { results.push({productionError: error.message}); }
+          fs.writeFileSync('audit/baseline.json', JSON.stringify(results, null, 2));
+          console.log(JSON.stringify(results, null, 2));
+          await browser.close();
+          JS
+      - name: Package isolated source and build tools
+        run: tar --exclude=./audit --exclude=./.git --exclude=./.env --exclude='./.env.local' -czf audit/workspace.tgz .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workout-ux-audit
+          path: audit/
+          retention-days: 3
