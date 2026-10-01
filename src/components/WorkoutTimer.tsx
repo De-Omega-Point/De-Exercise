@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { timerLabel, timerRemaining, WorkoutTimerStore, type TimerKind } from "../lib/workout-timer";
 
 type Props = {
@@ -25,9 +25,9 @@ export function WorkoutTimer({ store, openRequest, exerciseId, exerciseLabel, wo
   const previousFocus = useRef<HTMLElement | null>(null);
   const restSeconds = store.restFor(exerciseId);
 
-  useEffect(() => { if (openRequest > 0) setExpanded(true); }, [openRequest]);
+  useLayoutEffect(() => { if (openRequest > 0) setExpanded(true); }, [openRequest]);
   useEffect(() => { if (kind === "rest") setSeconds(String(restSeconds || 90)); }, [restSeconds, kind]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = dialog.current;
     if (!element) return;
     if (expanded && !element.open) {
@@ -161,7 +161,7 @@ export function WorkoutTimer({ store, openRequest, exerciseId, exerciseLabel, wo
       <div className="timer-progress" aria-hidden="true"><span style={{ width: `${Math.min(100, 100 * remaining / active.durationMs)}%` }} /></div>
       <span className="timer-sr-only" role="status">{statusLabel}</span>
     </aside>}
-    <dialog className="workout-timer-dialog" ref={dialog} aria-labelledby="timer-title" onClose={close}>
+    <dialog className="workout-timer-dialog" ref={dialog} aria-labelledby="timer-title" onClose={close} onCancel={event => { event.preventDefault(); setExpanded(false); }}>
       <header className="timer-dialog-heading"><div><span className="page-kicker">DE-EXERCISE</span><h2 id="timer-title">Your training timer</h2></div>
         <button type="button" onClick={() => setExpanded(false)} aria-label="Close timer settings">✕</button>
       </header>
