@@ -9,6 +9,14 @@ const results = [];
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
 const timerState = page => page.evaluate(() => JSON.parse(localStorage.getItem('de-exercise:timer:v1:demo')));
 const nav = (page, name) => page.getByRole('navigation', {name:'Primary navigation'}).getByRole('button',{name, exact:true}).click();
+async function openTimer(page) {
+  await page.getByRole('button',{name:'Open training timer'}).click();
+  await page.getByRole('dialog').waitFor({state:'visible'});
+}
+async function closeTimer(page) {
+  await page.keyboard.press('Escape');
+  await page.getByRole('dialog').waitFor({state:'hidden'});
+}
 async function check(name, fn) {
   try { await fn(); results.push({ name, status:'passed' }); console.log('PASS',name); }
   catch (error) { results.push({ name, status:'failed', error:error.message }); console.error('FAIL',name,error.message); }
@@ -24,12 +32,10 @@ try {
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false, `${tab} overflow`);
       }
       await nav(page,'Train');
-      await page.getByRole('button',{name:'Open training timer'}).click();
-      await page.getByRole('dialog').waitFor({state:'visible'});
-      assert.equal(await page.getByRole('dialog').isVisible(),true);
+      await openTimer(page);
       assert.equal(await page.getByRole('dialog').evaluate(e=>e.scrollWidth>e.clientWidth),false,'Timer dialog overflow');
       await page.screenshot({path:`${output}/timer-${width}.png`});
-      await page.keyboard.press('Escape');
+      await closeTimer(page);
       assert.deepEqual(errors,[]);await context.close();
     });
   }
@@ -123,16 +129,18 @@ try {
     await page.reload();await page.locator('.workout-timer-dock').waitFor();
     const after=(await timerState(page)).active;assert.equal(after.id,before.id);assert.equal(after.endsAt,before.endsAt);
   });
-  await check('Dialog Escape preserves timer and restores keyboard focus',async()=>{
+  await check('Repeated dialog Escape preserves timer and restores keyboard focus',async()=>{
     const id=(await timerState(page)).active.id;
-    await page.getByRole('button',{name:'Open training timer'}).click();
-    await page.keyboard.press('Escape');
-    assert.equal((await timerState(page)).active.id,id);
-    assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'Open training timer');
+    for (let attempt=0;attempt<5;attempt++) {
+      await openTimer(page);
+      await closeTimer(page);
+      await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Open training timer');
+      assert.equal((await timerState(page)).active.id,id);
+    }
   });
   await check('Expired timer returns as ready without completing movement',async()=>{
     await page.locator('.workout-timer-dock').getByRole('button',{name:'Skip',exact:true}).click();
-    await page.getByRole('button',{name:'Open training timer'}).click();
+    await openTimer(page);
     await page.getByRole('dialog').getByRole('button',{name:'Hold / mobility'}).click();
     await page.getByLabel('Custom duration (seconds)').fill('1');
     await page.getByRole('button',{name:'Start interval',exact:true}).click();
@@ -146,9 +154,9 @@ try {
     await page.getByRole('button',{name:'Start workout',exact:true}).click();
     await page.locator('input[type=file]').setInputFiles({name:'fixture.png',mimeType:'image/png',buffer:png});
     await page.getByRole('button',{name:'Use this machine'}).click();
-    await page.getByRole('button',{name:'Open training timer'}).click();
+    await openTimer(page);
     await page.getByLabel('Start rest after a successfully saved set').uncheck();
-    await page.keyboard.press('Escape');
+    await closeTimer(page);
     await page.getByRole('button',{name:'Save set',exact:true}).click();
     assert.equal(await page.locator('.set-row').count(),1);assert.equal((await timerState(page)).active,null);
   });
