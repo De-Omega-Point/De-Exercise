@@ -38,32 +38,41 @@ export async function recogniseEquipment(file: File): Promise<EquipmentRecogniti
     try {
       payload = await error.context.json();
     } catch {
-      // The function should return JSON, but preserve a useful fallback.
+      // Preserve a useful fallback if an intermediary returns non-JSON.
     }
 
-    if (payload?.code === "OPENAI_API_KEY_MISSING") {
-      throw new Error(
-        "AI machine recognition needs the OPENAI_API_KEY secret in Supabase Edge Function Secrets.",
-      );
+    if (
+      payload?.code === "DE_AI_VISION_URL_MISSING"
+      || payload?.code === "DE_AI_VISION_TOKEN_MISSING"
+    ) {
+      throw new Error("De-AI Vision is not configured for machine recognition yet.");
     }
 
-    if (payload?.code === "OPENAI_RATE_LIMITED") {
-      throw new Error("AI recognition is temporarily rate-limited. Try the scan again shortly.");
+    if (payload?.code === "DE_AI_RATE_LIMITED") {
+      throw new Error("De-AI Vision is busy. Try the scan again shortly.");
     }
 
-    if (payload?.code === "OPENAI_AUTH_FAILED") {
-      throw new Error("The OpenAI API key configured for machine recognition is invalid or expired.");
+    if (payload?.code === "DE_AI_AUTH_FAILED") {
+      throw new Error("De-AI Vision authentication needs attention.");
     }
 
-    throw new Error(payload?.error || "AI machine recognition failed.");
+    if (payload?.code === "DE_AI_TIMEOUT") {
+      throw new Error("De-AI took too long to identify the machine. Try another photo.");
+    }
+
+    if (payload?.code === "DE_AI_UNAVAILABLE") {
+      throw new Error("De-AI Vision is temporarily unavailable.");
+    }
+
+    throw new Error(payload?.error || "De-AI machine recognition failed.");
   }
 
   if (error instanceof FunctionsRelayError) {
-    throw new Error("Supabase could not relay the machine-recognition request.");
+    throw new Error("Supabase could not relay the request to De-AI.");
   }
 
   if (error instanceof FunctionsFetchError) {
-    throw new Error("Could not reach the machine-recognition service.");
+    throw new Error("Could not reach the De-AI recognition service.");
   }
 
   if (error) {
@@ -71,7 +80,7 @@ export async function recogniseEquipment(file: File): Promise<EquipmentRecogniti
   }
 
   if (!data) {
-    throw new Error("Recognition service returned no result.");
+    throw new Error("De-AI returned no recognition result.");
   }
 
   return data;
