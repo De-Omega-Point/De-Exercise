@@ -4,6 +4,7 @@ import { EditableSetList } from "./components/EditableSetList";
 import { HistoryView } from "./components/HistoryView";
 import { LibraryView } from "./components/LibraryView";
 import { ProgressionRuleEditor } from "./components/ProgressionRuleEditor";
+import { OmegaBrandMark } from "./components/OmegaBrandMark";
 import { ProgressView } from "./components/ProgressView";
 import { RoutineSessionQueue } from "./components/RoutineSessionQueue";
 import { RoutinesView } from "./components/RoutinesView";
@@ -177,7 +178,11 @@ export default function App() {
     return (
       <main className="shell auth-shell">
         <article className="card auth-card">
-          <p className="eyebrow">DE-EXERCISE</p>
+          <OmegaBrandMark />
+          <div className="auth-product-lockup">
+            <strong><span>De-</span>Exercise</strong>
+            <small>A De-Omega-Point product</small>
+          </div>
           <h1 className="auth-title">Loading your training system…</h1>
         </article>
       </main>
@@ -723,9 +728,12 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="happy-header">
-        <div className="brand-lockup">
-          <strong><span>De-</span>Exercise</strong>
-          <small>Progress today. Stronger tomorrow.</small>
+        <div className="brand-stack">
+          <OmegaBrandMark />
+          <div className="brand-lockup">
+            <strong><span>De-</span>Exercise</strong>
+            <small>Progress today. Stronger tomorrow.</small>
+          </div>
         </div>
         <div className="header-actions">
           <span className="sync-pill">{isLive ? "● Synced" : "Demo"}</span>
@@ -1111,7 +1119,11 @@ function AuthScreen() {
   return (
     <main className="shell auth-shell">
       <article className="card auth-card">
-        <p className="eyebrow">DE-EXERCISE</p>
+        <OmegaBrandMark />
+        <div className="auth-product-lockup">
+          <strong><span>De-</span>Exercise</strong>
+          <small>A De-Omega-Point product</small>
+        </div>
         <h1 className="auth-title">Your machines. Your numbers. Your next move.</h1>
         <p className="subtle">Sign in to sync equipment identity, workout sets and progression history.</p>
 

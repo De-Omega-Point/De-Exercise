@@ -19,6 +19,8 @@
   --yellow: #f8bd35;
   --yellow-soft: #fff5cf;
   --green: #21a668;
+  --omega: #48ff20;
+  --omega-ink: #17301c;
   --shadow: 0 12px 32px rgba(20, 33, 61, .08);
 }
 
@@ -92,6 +94,70 @@ textarea:focus {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 18px;
+}
+
+
+.brand-stack {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+}
+
+.omega-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--omega);
+  min-width: max-content;
+}
+
+.omega-brand-mark {
+  width: 34px;
+  height: 34px;
+  filter: drop-shadow(0 0 5px rgba(72, 255, 32, .34));
+}
+
+.omega-brand-copy {
+  display: grid;
+  gap: 1px;
+}
+
+.omega-brand-copy strong {
+  color: var(--omega-ink);
+  font-size: .66rem;
+  font-weight: 950;
+  letter-spacing: .105em;
+}
+
+.omega-brand-copy small {
+  color: #5d7463;
+  font-size: .43rem;
+  font-weight: 850;
+  letter-spacing: .105em;
+}
+
+.auth-product-lockup {
+  display: grid;
+  gap: 2px;
+  margin: 10px 0 4px;
+}
+
+.auth-product-lockup strong {
+  color: var(--teal);
+  font-size: 1.45rem;
+  line-height: 1;
+  letter-spacing: -.04em;
+}
+
+.auth-product-lockup strong span {
+  color: var(--coral);
+}
+
+.auth-product-lockup small {
+  color: #68806f;
+  font-size: .72rem;
+  font-weight: 750;
 }
 
 .brand-lockup {
@@ -1464,6 +1530,19 @@ textarea:focus {
 
   .happy-header {
     align-items: flex-start;
+  }
+
+  .brand-stack {
+    gap: 9px;
+  }
+
+  .omega-brand-copy {
+    display: none;
+  }
+
+  .omega-brand-mark {
+    width: 30px;
+    height: 30px;
   }
 
   .brand-lockup small {
